@@ -150,6 +150,9 @@ nothing on every route, and a 3B model is markedly worse at it. `NLLanguageRecog
 source language, because `TranslationSession(installedSource:target:)` needs a concrete one and
 `LanguageAvailability` reports only a status.
 
+The direct installed-language session initializer is macOS 26-only. On macOS 15 the Translate action
+reports that requirement; other Quick Actions and configured model providers remain available.
+
 `TranslationError` is annotated `macOS 26.4` while the deployment floor is `26.0`, so failures are
 caught as plain `Error` and reported by what was asked rather than by matching its cases.
 

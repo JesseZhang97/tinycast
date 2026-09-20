@@ -9,8 +9,8 @@ RAM.**
          src="https://img.shields.io/github/v/release/abue-ammar/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
   <img alt="Swift 6.0"
        src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat&logo=swift&logoColor=white">
-  <img alt="macOS 26 or later"
-       src="https://img.shields.io/badge/macOS-26%2B-000000?style=flat&logo=apple&logoColor=white">
+  <img alt="macOS 15 or later"
+       src="https://img.shields.io/badge/macOS-15%2B-000000?style=flat&logo=apple&logoColor=white">
   <a href="LICENSE">
     <img alt="License: AGPL-3.0"
          src="https://img.shields.io/badge/License-AGPL--3.0-3DA639?style=flat"></a>
@@ -90,6 +90,9 @@ Then run the one line that matches your Mac:
 | -------------------------------- | ---------------------------------------- |
 | Apple silicon, macOS 26 or newer | `brew install --cask tinycast`           |
 | Intel, macOS 26                  | `brew install --cask tinycast-universal` |
+
+The upstream Homebrew packages remain macOS 26-only. This compatibility branch builds from source on
+macOS 15; see [Maintaining the macOS 15 branch](docs/macos15.md).
 
 Not sure which you have? **Apple menu → About This Mac.** Homebrew checks too, and refuses the
 wrong one.

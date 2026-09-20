@@ -1,4 +1,3 @@
-import FoundationModels
 import Foundation
 
 @MainActor
@@ -25,10 +24,15 @@ enum AIProviderFactory {
         subscription: ChatGPTSubscriptionManager,
         installedAI: InstalledAIManager,
         keyStore: KeychainSecretStore = .aiAPIKeys,
-        guardrails: SystemLanguageModel.Guardrails = .default
+        guardrails: AppleIntelligenceGuardrails = .standard
     ) throws -> any AIProvider {
         switch selection {
         case .appleIntelligence:
+            guard #available(macOS 26.0, *) else {
+                throw AIProviderError.unavailable(
+                    appleIntelligenceStatus().message
+                        ?? "Apple Intelligence requires macOS 26 or later.")
+            }
             if let message = AppleIntelligenceProvider.status().message {
                 throw AIProviderError.unavailable(message)
             }
@@ -85,5 +89,10 @@ enum AIProviderFactory {
                         && connection.takesThinkingField),
                 apiKey: key)
         }
+    }
+
+    nonisolated static func appleIntelligenceStatus() -> AppleIntelligenceStatus {
+        guard #available(macOS 26.0, *) else { return .unsupportedOS }
+        return AppleIntelligenceProvider.status()
     }
 }

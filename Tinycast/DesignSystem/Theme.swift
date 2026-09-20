@@ -448,10 +448,53 @@ enum Theme {
     }
 }
 
+private struct FrostedSurface<S: Shape>: ViewModifier {
+    let shape: S
+    let isInteractive: Bool
+    let drawsFallbackShadow: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            if isInteractive {
+                content
+                    .glassEffect(.regular.interactive().tint(Theme.Colors.glassFrost), in: shape)
+                    .tint(.clear)
+            } else {
+                content.glassEffect(.regular, in: shape)
+            }
+        } else {
+            content.background { fallback }
+        }
+    }
+
+    private var fallback: some View {
+        shape
+            .fill(.ultraThinMaterial)
+            .overlay { shape.fill(Theme.Colors.glassFrost) }
+            .overlay {
+                shape.stroke(
+                    Theme.Colors.border.opacity(0.6), lineWidth: Theme.Size.hairline / 2)
+            }
+            .shadow(
+                color: drawsFallbackShadow ? .black.opacity(0.22) : .clear,
+                radius: Theme.Spacing.sm, y: Theme.Spacing.xxs)
+    }
+}
+
 extension View {
-    /// A floating glass control surface, frosted so it reads brighter than clear glass.
+    /// A floating control surface with interactive Liquid Glass where the OS supports it.
     func frosted(in shape: some Shape) -> some View {
-        glassEffect(.regular.interactive().tint(Theme.Colors.glassFrost), in: shape)
-            .tint(.clear)
+        modifier(FrostedSurface(shape: shape, isInteractive: true, drawsFallbackShadow: true))
+    }
+
+    /// A floating menu surface with Liquid Glass where the OS supports it.
+    func frostedMenu(in shape: some Shape) -> some View {
+        modifier(FrostedSurface(shape: shape, isInteractive: false, drawsFallbackShadow: true))
+    }
+
+    /// A window-owned surface whose AppKit panel already supplies elevation.
+    func frostedPanel(in shape: some Shape) -> some View {
+        modifier(FrostedSurface(shape: shape, isInteractive: false, drawsFallbackShadow: false))
     }
 }

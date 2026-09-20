@@ -43,23 +43,24 @@ struct OverflowFadeMask: ViewModifier {
             return [.init(color: .black, location: 0)]
         }
         let extent = min(band / height, 0.5)
+        let one = CGFloat(1)
         return [
-            .init(color: .black.opacity(1 - topStrength), location: 0),
+            .init(color: .black.opacity(one - topStrength), location: 0),
             .init(
-                color: .black.opacity(1 - topStrength * 0.75),
+                color: .black.opacity(one - topStrength * 0.75),
                 location: extent * 0.35),
             .init(
-                color: .black.opacity(1 - topStrength * 0.25),
+                color: .black.opacity(one - topStrength * 0.25),
                 location: extent * 0.7),
             .init(color: .black, location: extent),
-            .init(color: .black, location: 1 - extent),
+            .init(color: .black, location: one - extent),
             .init(
-                color: .black.opacity(1 - bottomStrength * 0.25),
-                location: 1 - extent * 0.7),
+                color: .black.opacity(one - bottomStrength * 0.25),
+                location: one - extent * 0.7),
             .init(
-                color: .black.opacity(1 - bottomStrength * 0.75),
-                location: 1 - extent * 0.35),
-            .init(color: .black.opacity(1 - bottomStrength), location: 1)
+                color: .black.opacity(one - bottomStrength * 0.75),
+                location: one - extent * 0.35),
+            .init(color: .black.opacity(one - bottomStrength), location: one)
         ]
     }
 
@@ -67,10 +68,11 @@ struct OverflowFadeMask: ViewModifier {
     private func bottomStops(height: CGFloat) -> [Gradient.Stop] {
         let strength = min(overflow.bottom / band, 1)
         guard strength > 0, height > band else { return [.init(color: .black, location: 0)] }
+        let one = CGFloat(1)
         return [
             .init(color: .black, location: 0),
-            .init(color: .black, location: 1 - band / height),
-            .init(color: .black.opacity(1 - strength), location: 1)
+            .init(color: .black, location: one - band / height),
+            .init(color: .black.opacity(one - strength), location: one)
         ]
     }
 }

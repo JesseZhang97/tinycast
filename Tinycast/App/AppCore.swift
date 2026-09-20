@@ -54,7 +54,7 @@ final class AppCore {
     let chatHistory: ChatHistoryStore
     let aiChat: AIChatState
     let aiSettings = AISettingsStore(
-        isAppleIntelligenceAvailable: { AppleIntelligenceProvider.status().isAvailable })
+        isAppleIntelligenceAvailable: { AIProviderFactory.appleIntelligenceStatus().isAvailable })
     let mcpSettings = MCPSettingsStore()
     let mcp = MCPServerManager()
     let quickActionSettings = QuickActionSettingsStore()

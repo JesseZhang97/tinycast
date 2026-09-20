@@ -34,7 +34,7 @@ struct NoteHeadingMenuView: View {
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .glassEffect(.regular, in: surface)
+        .frostedMenu(in: surface)
         .clipShape(surface)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Heading")

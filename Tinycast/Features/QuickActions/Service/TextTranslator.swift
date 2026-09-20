@@ -2,12 +2,12 @@ import Foundation
 import NaturalLanguage
 import Translation
 
-/// `TranslationError` is macOS 26.4 against a 26.0 floor, so failures stay plain `Error` here.
 enum TextTranslator {
     enum Failure: LocalizedError, Equatable {
         case undetectableSource
         case unsupported
         case notInstalled(language: String)
+        case requiresMacOS26
         case failed
 
         var errorDescription: String? {
@@ -18,6 +18,8 @@ enum TextTranslator {
                 return "Apple's translator does not support this language pair."
             case .notInstalled(let language):
                 return "\(language) needs to be downloaded before it can be used."
+            case .requiresMacOS26:
+                return "On-device translation requires macOS 26 or later."
             case .failed:
                 return "The text could not be translated."
             }
@@ -36,6 +38,7 @@ enum TextTranslator {
 
     /// Installed pairs only: a missing language is downloaded in System Settings, never from here.
     static func translate(_ text: String, to target: Locale.Language) async throws -> String {
+        guard #available(macOS 26.0, *) else { throw Failure.requiresMacOS26 }
         guard let source = sourceLanguage(of: text) else { throw Failure.undetectableSource }
         guard !source.isEquivalent(to: target) else { return text }
         switch await LanguageAvailability().status(from: source, to: target) {

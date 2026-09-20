@@ -111,7 +111,8 @@ final class StubServer {
 
         let client = CodexAppServerClient(
             codexHome: root.appending(path: "home", directoryHint: .isDirectory),
-            workspace: root.appending(path: "work", directoryHint: .isDirectory))
+            workspace: root.appending(path: "work", directoryHint: .isDirectory),
+            executable: executable)
         let runner = CodexTurnRunner(client: client)
         runner.connect = {
             try await client.start()

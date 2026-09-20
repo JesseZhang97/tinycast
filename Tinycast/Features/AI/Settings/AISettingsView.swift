@@ -102,7 +102,8 @@ struct AISettingsView: View {
 
     /// Why the on-device route is missing from the picker, or `nil` when it is there.
     private var appleIntelligenceReason: String? {
-        settings.isAppleIntelligenceAvailable() ? nil : AppleIntelligenceProvider.status().message
+        settings.isAppleIntelligenceAvailable()
+            ? nil : AIProviderFactory.appleIntelligenceStatus().message
     }
 
     private var providerSummary: String {

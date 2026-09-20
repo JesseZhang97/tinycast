@@ -267,28 +267,43 @@ private struct PaletteTransparencyRow: View {
 
     var body: some View {
         SettingsRow(title: "Background transparency", anchor: .generalAppearance) {
+            transparencySlider
+                .labelsHidden()
+                .accessibilityLabel("Background transparency")
+                .frame(width: Theme.Size.paletteTransparencySlider)
+            Button("Reset") {
+                draft = nil
+                settings.paletteTransparency = 0
+            }
+            .help("Restore the default background in Light and Dark.")
+        }
+    }
+
+    @ViewBuilder private var transparencySlider: some View {
+        if #available(macOS 26.0, *) {
             Slider(
                 value: value, in: -100...100, step: 50, neutralValue: 0,
                 label: { EmptyView() },
                 minimumValueLabel: { Text("Less") },
                 maximumValueLabel: { Text("More") },
                 tick: { SliderTick($0) },
-                onEditingChanged: { editing in
-                    isEditing = editing
-                    if !editing, let draft {
-                        settings.paletteTransparency = Int(draft)
-                        self.draft = nil
-                    }
-                }
+                onEditingChanged: updateEditing
             )
-            .labelsHidden()
-            .accessibilityLabel("Background transparency")
-            .frame(width: Theme.Size.paletteTransparencySlider)
-            Button("Reset") {
-                draft = nil
-                settings.paletteTransparency = 0
-            }
-            .help("Restore the default background in Light and Dark.")
+        } else {
+            Slider(
+                value: value, in: -100...100, step: 50,
+                label: { EmptyView() },
+                minimumValueLabel: { Text("Less") },
+                maximumValueLabel: { Text("More") },
+                onEditingChanged: updateEditing)
+        }
+    }
+
+    private func updateEditing(_ editing: Bool) {
+        isEditing = editing
+        if !editing, let draft {
+            settings.paletteTransparency = Int(draft)
+            self.draft = nil
         }
     }
 }

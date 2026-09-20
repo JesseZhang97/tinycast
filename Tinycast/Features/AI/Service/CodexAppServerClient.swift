@@ -29,6 +29,7 @@ final class CodexAppServerClient {
     var onExit: ((String) -> Void)?
 
     private let codexHome: URL?
+    private let executableOverride: URL?
     let workspace: URL
     private var process: Process?
     private var input: FileHandle?
@@ -37,16 +38,23 @@ final class CodexAppServerClient {
     private var nextID = 1
     private var pending: [Int: PendingRequest] = [:]
 
-    init(codexHome: URL? = nil, workspace: URL) {
+    init(codexHome: URL? = nil, workspace: URL, executable: URL? = nil) {
         self.codexHome = codexHome
         self.workspace = workspace
+        self.executableOverride = executable
     }
 
     var isRunning: Bool { process?.isRunning == true }
 
     func start() async throws {
         if isRunning { return }
-        guard let executable = await ExecutableLocator.locate("codex") else {
+        let executable: URL?
+        if let executableOverride {
+            executable = executableOverride
+        } else {
+            executable = await ExecutableLocator.locate("codex")
+        }
+        guard let executable else {
             throw ClientError.executableMissing
         }
         // A second caller may have started it during the lookup.

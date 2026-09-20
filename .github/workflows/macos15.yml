@@ -1,0 +1,25 @@
+name: macOS 15 compatibility
+
+on:
+  push:
+    branches: [macos15, codex/macos15]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort -V | tail -n 1)"
+          test -n "$XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Install lint dependency
+        run: brew install swiftlint
+      - name: Run harnesses
+        run: ./Scripts/run-tests.sh
+      - name: Lint
+        run: ./Scripts/lint.sh
+      - name: Verify universal macOS 15 build
+        run: ./Scripts/verify-macos15.sh
