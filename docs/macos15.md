@@ -5,12 +5,13 @@ It builds with Xcode 26 and the current SDK while retaining a macOS 15 deploymen
 
 ## Syncing upstream
 
-Keep the fork's `main` byte-for-byte aligned with upstream and merge it into this branch:
+Keep the fork's `main` aligned with upstream and merge it into this branch. A release-aligned
+sync fast-forwards `main` to the latest stable tag instead of `upstream/main`:
 
 ```sh
-git fetch upstream
+git fetch upstream --tags
 git switch main
-git merge --ff-only upstream/main
+git merge --ff-only v0.11.12   # or upstream/main
 git push origin main
 git switch macos15
 git merge main
@@ -24,7 +25,8 @@ availability error usually means upstream adopted another macOS 26 API. Put its 
 ## Compatibility boundaries
 
 - Liquid Glass remains native on macOS 26. macOS 15 renders the same shapes with material, frost,
-  border and elevation fallbacks from `Theme.swift`.
+  border and elevation fallbacks from `Theme.swift`. Panel backdrops go through `GlassEffectView`,
+  which uses `NSVisualEffectView` on macOS 15.
 - Apple Intelligence uses Foundation Models and remains available only on macOS 26. Other configured
   AI providers continue to work on macOS 15.
 - Apple's directly constructed translation session is macOS 26-only. Translate reports that limitation
