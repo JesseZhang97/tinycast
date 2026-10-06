@@ -86,7 +86,7 @@ final class AppCore {
         clipboardStore: clipboardStore, appIndex: appIndex, settings: settings,
         windowController: windowController, paletteCoordinator: paletteCoordinator,
         settingsCoordinator: settingsCoordinator,
-        showMessage: { [unowned self] in self.showMessage($0) }, core: self)
+        showMessage: { [unowned self] in self.showMessage($0, tone: $1) }, core: self)
     @ObservationIgnored private(set) lazy var quicklinkCoordinator = QuicklinkCoordinator(
         store: quicklinks, settings: settings,
         appIndex: appIndex, injector: textInjector, hotKeys: hotKeys, favorites: favorites,
