@@ -552,6 +552,7 @@ run slow ext-test          -parse-as-library \
                            $E/Model/ExtensionLaunchType.swift \
                            $E/Model/ExtensionFormField.swift \
                            $E/Model/ExtensionGridLayout.swift \
+                           $E/Model/ExtensionSearchState.swift \
                            $E/Model/ExtensionManifest.swift \
                            $E/Model/ExtensionRefreshPolicy.swift \
                            $E/Model/ExtensionRefreshState.swift \
