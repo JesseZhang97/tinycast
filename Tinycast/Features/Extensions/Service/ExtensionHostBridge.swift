@@ -238,7 +238,9 @@ final class ExtensionHostBridge: ExtensionHostAPI {
                     Paster.copyPlainText(text)
                 }
             } else {
-                Paster.pasteString(text, previousApp: context?.pasteTarget)
+                let target = context?.pasteTarget
+                context?.closeMainWindow(clearRootSearch: false)
+                Paster.pasteString(text, previousApp: target)
             }
             return nil
 
