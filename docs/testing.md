@@ -544,6 +544,8 @@ caches, TCC grants and login item, so this cannot disturb an installed copy.
   rendered note and is styled at once
 - The derived title of an Untitled note shows no Markdown markers
 - A narrow window wraps list items under their text, not under the marker
+- A bullet, task or numbered item whose first word is wider than the window keeps a whole marker on
+  its first line of text, and its checkbox toggles where it is drawn
 - With Render Markdown **off**, the note is fully literal (markers visible, links inert, task syntax
   plain) and Return, Tab, Delete, and formatting-looking shortcuts keep native plain-text behavior;
   flipping it back re-renders without dirtying the note or touching undo
