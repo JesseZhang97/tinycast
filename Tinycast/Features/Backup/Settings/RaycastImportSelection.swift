@@ -3,6 +3,7 @@ import SwiftUI
 /// The category picker shared by the Backup pane and onboarding.
 struct RaycastImportSelection: View {
     @Binding var selection: RaycastImportOptions
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct Category: Identifiable {
         let option: RaycastImportOptions
@@ -40,9 +41,12 @@ struct RaycastImportSelection: View {
                 ForEach(Self.categories) { category in
                     Toggle(isOn: included(category.option)) {
                         HStack(spacing: Theme.Spacing.sm) {
-                            Image(systemName: category.symbol)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 16)
+                            Image(
+                                systemName: SystemSymbolName.resolve(
+                                    category.symbol, isDark: colorScheme == .dark)
+                            )
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16)
                             Text(category.label).lineLimit(1)
                         }
                     }

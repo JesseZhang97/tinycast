@@ -346,6 +346,7 @@ private struct PopoverMenuRow: View {
     let selected: Bool
     let onActivate: () -> Void
     @Environment(\.metrics) private var metrics
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: onActivate) {
@@ -359,7 +360,7 @@ private struct PopoverMenuRow: View {
                     case .blank:
                         EmptyView()
                     case .symbol(let name):
-                        Image(systemName: SystemSymbolName.resolve(name))
+                        Image(systemName: SystemSymbolName.resolve(name, isDark: colorScheme == .dark))
                             .font(
                                 .system(
                                     size: metrics.scaled(Theme.Typography.menuSymbolSize),
