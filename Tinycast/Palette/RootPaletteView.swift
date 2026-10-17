@@ -565,7 +565,7 @@ struct RootPaletteView: View {
             }
             .modifier(
                 ExtensionShortcutKeys(
-                    screen: menuOpen ? nil : screen as? ExtensionCommandScreen, selection: sel)
+                    screen: { menuOpen ? nil : screen as? ExtensionCommandScreen }, selection: sel)
             )
             // ⌘K toggles the actions panel for the current selection.
             .onKeyPress(phases: .down) { press in
