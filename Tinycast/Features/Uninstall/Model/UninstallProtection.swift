@@ -11,6 +11,9 @@ struct PathFacts: Hashable, Sendable {
     var isSystemRestricted = false
     /// `UF_IMMUTABLE` — Finder's "Locked" checkbox, which the user can clear themselves.
     var isUserImmutable = false
+    var isDirectory = false
+    /// Only decides anything for a directory — see `classify`.
+    var isWritable = true
     /// Only decides anything under a sticky parent — see `classify`.
     var isOwnedByCurrentUser = true
     var parentIsWritable = true
@@ -32,6 +35,7 @@ enum UninstallProtection: String, Hashable, Sendable, CaseIterable {
     case notOwned
     case needsFullDiskAccess
     case parentNotWritable
+    case notWritable
     case missing
 
     var isRemovable: Bool { self == .removable }
@@ -53,6 +57,9 @@ enum UninstallProtection: String, Hashable, Sendable, CaseIterable {
         case .parentNotWritable:
             return "Its enclosing folder isn’t writable by you, and Tinycast never asks for an "
                 + "administrator password."
+        case .notWritable:
+            return "Only an administrator can move it, as with App Store apps. "
+                + "Drag it to the Trash in Finder instead."
         case .missing:
             return "No longer on disk."
         }
@@ -70,10 +77,12 @@ enum UninstallProtectionRules {
         {
             return .needsFullDiskAccess
         }
-        // Trashing renames out of the parent, so its write bit decides, not the item's owner.
+        // Trashing renames out of the parent, so its write bit counts, not the item's owner.
         if !facts.parentIsWritable { return .parentNotWritable }
         // The one case where ownership does decide: a sticky parent lets only an owner unlink.
         if facts.parentIsSticky, !facts.isOwnedByCurrentUser { return .notOwned }
+        // Moving a directory to a new parent rewrites its `..`, so its own write bit counts too.
+        if facts.isDirectory, !facts.isWritable { return .notWritable }
         return .removable
     }
 
