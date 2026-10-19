@@ -265,6 +265,15 @@ final class PalettePanel: NSPanel {
         paletteState?.noteCommandHeld(false)
     }
 
+    /// A child hidden with its parent skips its next open animation.
+    override func orderOut(_ sender: Any?) {
+        for child in childWindows ?? [] {
+            removeChildWindow(child)
+            child.orderOut(nil)
+        }
+        super.orderOut(sender)
+    }
+
     override var canBecomeKey: Bool { true }
     // The parent stays main while a menu is key, so its Liquid Glass remains active.
     override var canBecomeMain: Bool { true }

@@ -448,7 +448,8 @@ width; their hover keeps the shared 10pt menu-row corner.
 
 A menu is **not** an overlay inside the palette: `MenuPanelController` hosts it in a `MenuPanel`, a
 borderless non-activating `NSPanel` added as a **child window** of the palette's, which is what makes
-it follow a palette drag and vanish with it. Glass renders against the desktop rather than inside an
+it follow a palette drag and vanish with it. `PalettePanel.orderOut` detaches every child first,
+because a child ordered out along with its parent skips its next open animation. Glass renders against the desktop rather than inside an
 already-blurred, clipped panel, and no menu can be cropped by `RootPaletteView`'s `clipShape` however
 long it grows. The menu temporarily becomes key so its native `TextField` owns the caret and selection, while
 `MenuPanel` hands navigation and action shortcuts back to `RootPaletteView`. It restores key status
