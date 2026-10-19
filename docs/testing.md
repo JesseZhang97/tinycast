@@ -98,6 +98,7 @@ If a change touches anything in the right column, the harness on the left is man
 | `pasteboard-test` | `Clipboard/Service/ClipboardManager.swift` capture and `Paster.write` — what a Finder copy reads as, and what a file or image entry writes back |
 | `emoji-test` | `Emoji/Model/EmojiCatalog.swift`, `EmojiGridGeometry.swift`, the generated data and keyword packs |
 | `emoji-search-test` | `Emoji/Service/EmojiIndex.swift`, `FrequentEmojiStore.swift`, `Scripts/gen-emoji.js`'s keyword format, multilingual search |
+| `command-escape-tap-test` | `Palette/CommandEscapeTap.swift` — dedicated run-loop dispatch while main is blocked, timeout recovery, stale actions, installation cancellation and teardown; private ports and unposted events only |
 | `palette-navigation-test` | `Palette/PaletteState.swift`'s screen motions — `prepare`, `replace`, `push`, `pop` |
 | `palette-selection-test` | `Features/PaletteRowIndex.swift` |
 | `interface-size-test` | `DesignSystem/InterfaceMetrics.swift`, `Features/Settings/InterfaceSize.swift`, `Extensions/Model/ExtensionFormMetrics.swift` |
@@ -348,7 +349,8 @@ caches, TCC grants and login item, so this cannot disturb an installed copy.
 - ⌘⎋ from any depth lands on an empty root search with the window still open — **must be checked on
   a real keyboard**: macOS claims the chord, so `CommandEscapeTap` is the only thing that delivers it
   and it needs Accessibility granted to the running build. With the palette closed, ⌘⎋ still does
-  whatever macOS does with it
+  whatever macOS does with it. Open a menu or dialog over the palette and verify ⌘⎋ passes through
+  while the palette is not key; after dismissing it, the palette chord works again
 - A bare ⌫ in an empty field walks the same path Escape does
 - General ▸ Escape Key Behavior set to `Close window and pop to root`: Escape on any screen closes
   the window, and reopening lands on the root search whatever Pop to Root Search says

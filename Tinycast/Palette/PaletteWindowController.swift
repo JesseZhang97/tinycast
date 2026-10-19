@@ -23,9 +23,8 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
     private var pasteMonitor: Any?
     /// ⌘⎋: the window server claims it, so no keystroke is left for the responder chain to see.
     private lazy var commandEscapeTap = CommandEscapeTap { [weak self] in
-        guard let self, self.panel?.isKeyWindow == true else { return false }
+        guard let self, self.panel?.isKeyWindow == true else { return }
         self.core.palette.prepare(mode: .launcher)
-        return true
     }
 
     /// The centre line and its height detents for a drag in flight.
@@ -89,8 +88,6 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
             core.calendarCoordinator.paletteDidShow()
             core.palette.noteVisible(true)
             core.clipboardStore.setTextSearchActive(true)
-            // Only while we are on screen: a system-wide tap has no business outliving the window.
-            commandEscapeTap.enable()
             // Non-activating, so summoning never raises our own aux windows behind it.
             panel.makeKeyAndOrderFront(nil)
             panel.orderFrontRegardless()
@@ -235,6 +232,7 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
 
     /// Not for a dialog or a modal: hiding tears down a running command.
     func windowDidResignKey(_ notification: Notification) {
+        commandEscapeTap.disable()
         guard isVisible, !core.isShowingDialog else { return }
         if core.palette.menuOpen { return }
         // A file panel sets its own level under ours, so sink rather than dismiss.
@@ -246,6 +244,7 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        commandEscapeTap.enable()
         panel?.level = .palette
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
