@@ -1,22 +1,45 @@
 #!/bin/bash
-# Build a signed Tinycast.app into build/Tinycast-<version>.dmg. Usage: build-dmg.sh [version]
+# Build Tinycast.app into build/Tinycast-<version>.dmg. Usage: build-dmg.sh [--unsigned] [version]
 set -euo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 IDENTITY="Tinycast Self-Signed"
 DERIVED="build/DerivedData"
+unsigned=0
+version=""
+for arg in "$@"; do
+    case "$arg" in
+        --unsigned) unsigned=1 ;;
+        -*) echo "usage: $0 [--unsigned] [version]" >&2; exit 64 ;;
+        *) version="$arg" ;;
+    esac
+done
 
-if ! security find-identity -p codesigning | grep -q "$IDENTITY"; then
-    echo "✗ '$IDENTITY' code-signing identity not found — create it once (docs/signing.md)." >&2
-    exit 1
+sign_args=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" OTHER_CODE_SIGN_FLAGS="--timestamp=none")
+if [ "$unsigned" -eq 1 ]; then
+    sign_args=(
+        CODE_SIGNING_ALLOWED=NO
+        MACOSX_DEPLOYMENT_TARGET=15.0
+        ARCHS="arm64 x86_64"
+        ONLY_ACTIVE_ARCH=NO
+    )
+else
+    if ! security find-identity -p codesigning | grep -q "$IDENTITY"; then
+        echo "✗ '$IDENTITY' code-signing identity not found — create it once (docs/signing.md)." >&2
+        exit 1
+    fi
 fi
 
-echo "▸ Building signed Tinycast.app (Release)…"
+if [ "$unsigned" -eq 1 ]; then
+    echo "▸ Building unsigned universal Tinycast.app (Release)…"
+else
+    echo "▸ Building signed Tinycast.app (Release)…"
+fi
 xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
     -derivedDataPath "$DERIVED" \
-    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" OTHER_CODE_SIGN_FLAGS="--timestamp=none" \
-    ${1:+MARKETING_VERSION="$1"} \
+    "${sign_args[@]}" \
+    ${version:+MARKETING_VERSION="$version"} \
     build
 
 APP="$DERIVED/Build/Products/Release/Tinycast.app"

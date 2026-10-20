@@ -54,5 +54,6 @@ Before tagging, run the full harnesses, lint and universal Release verification:
 ```
 
 The verifier asserts the app and its embedded helpers declare a 15.0 floor and that macOS 26-only
-symbols remain weak imports. The GitHub Actions workflow runs the same checks after every branch
-update.
+symbols remain weak imports. The GitHub Actions workflow runs the same checks on `macos-26`, builds
+an unsigned universal DMG artifact, and also builds, tests and smoke-launches the app on a real
+`macos-15` runner so a missing weak import cannot hide behind the 26 SDK.

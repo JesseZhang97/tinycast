@@ -23,3 +23,31 @@ jobs:
         run: ./Scripts/lint.sh
       - name: Verify universal macOS 15 build
         run: ./Scripts/verify-macos15.sh
+      - name: Build unsigned universal DMG
+        run: ./Scripts/build-dmg.sh --unsigned
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Tinycast-macos15-unsigned
+          path: build/Tinycast-*.dmg
+          if-no-files-found: error
+
+  macos15:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show runner OS
+        run: sw_vers
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort -V | tail -n 1)"
+          test -n "$XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Build with macOS 15 deployment target
+        run: |
+          xcodebuild -project Tinycast.xcodeproj -scheme Tinycast \
+            -configuration Debug -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            MACOSX_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO build
+      - name: Run harnesses
+        run: ./Scripts/run-tests.sh
+      - name: Smoke-launch the built app
+        run: ./Scripts/smoke-macos15.sh "$RUNNER_TEMP/DerivedData/Build/Products/Debug/Tinycast Dev.app"
