@@ -113,13 +113,15 @@ struct FormTextArea: NSViewRepresentable {
 
         override var undoManager: UndoManager? { editingUndoManager }
 
-        /// Sequoia's didChangeText path coalesces into the previous typing group, or the window manager.
+        /// Sequoia's string setter registers on a different group than insertText; isolate ours.
         func replaceBoundText(_ newValue: String) {
             let old = string
             guard old != newValue else { return }
-            undoManager?.registerUndo(withTarget: self) { $0.replaceBoundText(old) }
+            editingUndoManager.disableUndoRegistration()
             string = newValue
             didChangeText()
+            editingUndoManager.enableUndoRegistration()
+            editingUndoManager.registerUndo(withTarget: self) { $0.replaceBoundText(old) }
         }
 
         // The non-activating panel cannot rely on the frontmost app's Undo menu.
