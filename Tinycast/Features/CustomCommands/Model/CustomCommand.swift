@@ -39,6 +39,7 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
     var command: String
     /// Off keeps the command and everything attached to it, but nothing may offer or run it.
     var isEnabled: Bool
+    var showsInRootSearch: Bool
     /// Sources the shell config so aliases resolve; opt-in, a heavy one costing more.
     var loadsShellEnvironment: Bool
     var requiresConfirmation: Bool
@@ -54,14 +55,16 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
 
     init(
         id: UUID = UUID(), name: String, command: String, isEnabled: Bool = true,
-        loadsShellEnvironment: Bool = false, requiresConfirmation: Bool = false,
-        showsConfirmation: Bool = false, arguments: [CustomCommandArgument] = [],
+        showsInRootSearch: Bool = true, loadsShellEnvironment: Bool = false,
+        requiresConfirmation: Bool = false, showsConfirmation: Bool = false,
+        arguments: [CustomCommandArgument] = [],
         showsOutput: Bool = false, workingDirectory: String? = nil, iconSymbol: String? = nil
     ) {
         self.id = id
         self.name = name
         self.command = command
         self.isEnabled = isEnabled
+        self.showsInRootSearch = showsInRootSearch
         self.loadsShellEnvironment = loadsShellEnvironment
         self.requiresConfirmation = requiresConfirmation
         self.showsConfirmation = showsConfirmation
@@ -71,7 +74,6 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
         self.iconSymbol = iconSymbol
     }
 
-    /// The glyph every surface draws for this command.
     var symbol: String { iconSymbol ?? Self.sfSymbol }
 
     var entryID: String { Self.entryIDPrefix + id.uuidString.lowercased() }
@@ -92,8 +94,9 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
 
     // Hand-written, so an added field keeps stored commands and older backups readable.
     private enum CodingKeys: String, CodingKey {
-        case id, name, command, isEnabled, loadsShellEnvironment, requiresConfirmation
-        case showsConfirmation, arguments, showsOutput, workingDirectory, iconSymbol
+        case id, name, command, isEnabled, showsInRootSearch, loadsShellEnvironment
+        case requiresConfirmation, showsConfirmation, arguments, showsOutput, workingDirectory
+        case iconSymbol
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +105,8 @@ struct CustomCommand: Codable, Hashable, Identifiable, Sendable {
         name = try container.decode(String.self, forKey: .name)
         command = try container.decode(String.self, forKey: .command)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        showsInRootSearch =
+            try container.decodeIfPresent(Bool.self, forKey: .showsInRootSearch) ?? true
         loadsShellEnvironment =
             try container.decodeIfPresent(Bool.self, forKey: .loadsShellEnvironment) ?? false
         requiresConfirmation =
@@ -132,10 +137,10 @@ enum CustomCommandValidationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptyName: return "Enter a name for the command."
-        case .emptyCommand: return "Enter a command to run."
-        case .duplicateName: return "A custom command with this name already exists."
-        case .invalidCharacter: return "Names and commands cannot contain null characters."
+        case .emptyName: return String(localized: "Enter a name for the command.")
+        case .emptyCommand: return String(localized: "Enter a command to run.")
+        case .duplicateName: return String(localized: "A custom command with this name already exists.")
+        case .invalidCharacter: return String(localized: "Names and commands cannot contain null characters.")
         }
     }
 }
@@ -164,6 +169,13 @@ final class CustomCommandStore {
 
     func command(entryID: String) -> CustomCommand? {
         CustomCommand.id(fromEntryID: entryID).flatMap(command)
+    }
+
+    func matching(_ query: String) -> [CustomCommand] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return commands.filter {
+            $0.isEnabled && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query))
+        }
     }
 
     // Takes a whole draft, so adding an option doesn't churn every call site.
@@ -201,6 +213,15 @@ final class CustomCommandStore {
         else { return }
         var updated = commands
         updated[index].isEnabled = enabled
+        commit(updated)
+    }
+
+    func setShowsInRootSearch(_ shows: Bool, id: UUID) {
+        guard let index = commands.firstIndex(where: { $0.id == id }),
+            commands[index].showsInRootSearch != shows
+        else { return }
+        var updated = commands
+        updated[index].showsInRootSearch = shows
         commit(updated)
     }
 

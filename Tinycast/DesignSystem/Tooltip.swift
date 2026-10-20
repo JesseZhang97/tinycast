@@ -2,7 +2,7 @@ import SwiftUI
 
 private enum TooltipLabel {
     case text(String)
-    case keyCap(String)
+    case keyCaps([String])
 }
 
 /// A hover label in Tinycast's own vocabulary, replacing a system `.help()` tooltip.
@@ -10,6 +10,7 @@ private struct TooltipModifier: ViewModifier {
     let label: TooltipLabel?
     let alignment: HorizontalAlignment
     let edge: VerticalEdge
+    var dismissOnPress = false
     @Environment(\.metrics) private var metrics
     @State private var hovered = false
     @State private var visible = false
@@ -26,6 +27,12 @@ private struct TooltipModifier: ViewModifier {
                 guard !Task.isCancelled, hovered else { return }
                 withAnimation(.easeOut(duration: Theme.Duration.tooltip)) { visible = true }
             }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0).onEnded { _ in
+                    hovered = false
+                    visible = false
+                }, isEnabled: dismissOnPress
+            )
             .overlay(alignment: Alignment(horizontal: alignment, vertical: side)) {
                 if let label, visible { tile(label) }
             }
@@ -61,8 +68,10 @@ private struct TooltipModifier: ViewModifier {
                 .foregroundStyle(Theme.Colors.textSecondary)
                 .padding(.horizontal, metrics.spacing.xs)
                 .frame(minHeight: metrics.size.keyCap)
-        case .keyCap(let cap):
-            KeyCapChip(text: cap, style: .outline)
+        case .keyCaps(let caps):
+            HStack(spacing: metrics.spacing.xxs) {
+                ForEach(caps, id: \.self) { KeyCapChip(text: $0, style: .outline) }
+            }
         }
     }
 }
@@ -70,14 +79,18 @@ private struct TooltipModifier: ViewModifier {
 extension View {
     /// Align it against a side edge, and hang it `.bottom` from a control at the window's top.
     func tooltip(
-        _ text: String?, alignment: HorizontalAlignment = .center, edge: VerticalEdge = .top
+        _ text: String?, alignment: HorizontalAlignment = .center, edge: VerticalEdge = .top,
+        dismissOnPress: Bool = false
     ) -> some View {
         modifier(
-            TooltipModifier(label: text.map(TooltipLabel.text), alignment: alignment, edge: edge))
+            TooltipModifier(
+                label: text.map(TooltipLabel.text), alignment: alignment, edge: edge,
+                dismissOnPress: dismissOnPress))
     }
 
-    func tooltip(keyCap: String?) -> some View {
+    func tooltip(keyCaps: [String]) -> some View {
         modifier(
-            TooltipModifier(label: keyCap.map(TooltipLabel.keyCap), alignment: .center, edge: .top))
+            TooltipModifier(
+                label: keyCaps.isEmpty ? nil : .keyCaps(keyCaps), alignment: .center, edge: .top))
     }
 }

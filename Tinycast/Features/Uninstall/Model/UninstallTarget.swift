@@ -1,6 +1,5 @@
 import Foundation
 
-/// What an uninstall is aimed at. Pure, for `Tests/uninstall-test.swift`.
 struct UninstallTarget: Hashable, Sendable {
     let bundleURL: URL
     let bundleID: String?
@@ -9,7 +8,6 @@ struct UninstallTarget: Hashable, Sendable {
     let bundleName: String?
 }
 
-/// How a candidate was attributed to the target.
 enum UninstallEvidence: String, Hashable, Sendable, CaseIterable {
     case bundle
     case bundleID
@@ -20,8 +18,8 @@ enum UninstallEvidence: String, Hashable, Sendable, CaseIterable {
     /// Weak evidence names itself on the row; proof-grade matches stay silent.
     var label: String? {
         switch self {
-        case .displayName: return "matched by name"
-        case .binSymlink: return "command-line tool"
+        case .displayName: return String(localized: "matched by name")
+        case .binSymlink: return String(localized: "command-line tool")
         case .bundle, .bundleID, .groupContainer: return nil
         }
     }
@@ -39,7 +37,7 @@ struct UninstallIdentity: Hashable, Sendable {
     let names: [String]
     let bundleURL: URL
 
-    /// Three, not four: Zed and IINA name their own folders. The guards carry the safety.
+    /// Three, not four, so a three-letter app's folder still matches. The guards carry the safety.
     static let minimumNameLength = 3
 
     /// Standard Library subdirectories, so an app sharing the name can never claim them.

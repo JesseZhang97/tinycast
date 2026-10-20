@@ -1,10 +1,8 @@
 import Foundation
 
-/// Reads a folder of Raycast script commands into drafts. See docs/features/custom-commands.md.
 enum RaycastScriptImport {
     private static let headSize = 8 * 1024
     private static let directivePrefix = "@raycast."
-    /// `#` for the shell templates, `//` for JavaScript and Swift, `--` for AppleScript.
     private static let commentMarkers = ["#", "//", "--"]
 
     /// Non-recursive, like Raycast's own script directories; a non-command file is skipped.
@@ -19,11 +17,16 @@ enum RaycastScriptImport {
             contents
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { url in
-                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                // A symlink reports its own type, not its target's; script folders are often links.
+                guard isRegularFile(url) || isRegularFile(url.resolvingSymlinksInPath()),
                     let source = head(of: url)
                 else { return nil }
                 return command(at: url, source: source)
             }
+    }
+
+    private static func isRegularFile(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     }
 
     /// A file is a script command when it names an interpreter and declares a title.
@@ -72,7 +75,6 @@ enum RaycastScriptImport {
         return line.dropFirst(marker.count).trimmingCharacters(in: .whitespaces)
     }
 
-    /// `silent` and `inline` have nothing to show; the two output modes open the window.
     private static func showsOutput(mode: String?) -> Bool {
         mode == "compact" || mode == "fullOutput"
     }

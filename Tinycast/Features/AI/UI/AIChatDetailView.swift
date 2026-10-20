@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The window's right-hand side: the open conversation, and its composer beneath it.
 struct AIChatDetailView: View {
     @Environment(AIChatCoordinator.self) private var coordinator
     @Environment(ChatFindState.self) private var find
@@ -12,13 +11,29 @@ struct AIChatDetailView: View {
 
     /// The last reply's options, once it has finished; typing or sending moves past them.
     private var suggestions: [String] {
-        guard !chat.isStreaming, let last = chat.session.messages.last, last.role == .assistant,
-            last.state == .complete
+        guard coordinator.aiSettings.choicesEnabled, !chat.isStreaming,
+            let last = chat.session.messages.last, last.role == .assistant, last.state == .complete
         else { return [] }
         return ChatChoices.split(last.text).choices
     }
 
     var body: some View {
+        GeometryReader { geometry in
+            pane(composerHeight: ChatComposerTextView.maximumHeight(in: geometry.size.height))
+        }
+        .animation(.easeOut(duration: Theme.Duration.tooltip), value: showsContext)
+        .dropDestination(for: URL.self) { files, _ in
+            coordinator.attach(files: files, to: chat)
+            return true
+        } isTargeted: {
+            isDropTargeted = $0
+        }
+        .overlay {
+            if isDropTargeted { dropHint }
+        }
+    }
+
+    private func pane(composerHeight: CGFloat) -> some View {
         // Stacked, not floated: the transcript ends where the composer begins, never beneath it.
         VStack(spacing: 0) {
             content
@@ -44,7 +59,8 @@ struct AIChatDetailView: View {
                 }
                 AIChatComposer(
                     chat: chat, coordinator: coordinator, settings: coordinator.aiSettings,
-                    showsContext: $showsContext)
+                    maximumTextHeight: composerHeight, showsContext: $showsContext,
+                    isDropTargeted: $isDropTargeted)
             }
             .frame(maxWidth: Theme.Size.aiChatReadingWidth)
             .padding(.horizontal, Theme.Spacing.xxl)
@@ -52,16 +68,6 @@ struct AIChatDetailView: View {
             .padding(.top, Theme.Spacing.sm)
             .animation(.snappy, value: suggestions)
             .animation(.snappy, value: chat.draft.isEmpty)
-        }
-        .animation(.easeOut(duration: Theme.Duration.tooltip), value: showsContext)
-        .dropDestination(for: URL.self) { files, _ in
-            coordinator.attach(files: files, to: chat)
-            return true
-        } isTargeted: {
-            isDropTargeted = $0
-        }
-        .overlay {
-            if isDropTargeted { dropHint }
         }
     }
 
@@ -112,12 +118,14 @@ struct AIChatDetailView: View {
     }
 }
 
-/// Staged files, the text, then the chat's options and Send, on one pane of Liquid Glass.
 private struct AIChatComposer: View {
     let chat: AIChatState
     let coordinator: AIChatCoordinator
     let settings: AISettingsStore
+    let maximumTextHeight: CGFloat
     @Binding var showsContext: Bool
+    @Binding var isDropTargeted: Bool
+    @State private var editor = ComposerTextViewHandle()
 
     private var canSend: Bool {
         !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -131,6 +139,7 @@ private struct AIChatComposer: View {
                 Label(notice, systemImage: "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, Theme.Spacing.sm)
             }
             chips
             ZStack(alignment: .topLeading) {
@@ -139,13 +148,22 @@ private struct AIChatComposer: View {
                         .foregroundStyle(.tertiary)
                         .allowsHitTesting(false)
                 }
-                ChatComposerTextView(text: $chat.draft, focusKey: chat.session.id, onSubmit: submit)
+                ChatComposerTextView(
+                    text: $chat.draft, focusKey: chat.session.id,
+                    maximumTextHeight: maximumTextHeight, handle: editor,
+                    isFileDragTargeted: $isDropTargeted,
+                    onDropFiles: { coordinator.attach(files: $0, to: chat) },
+                    onInvalidate: { coordinator.dictation.cancel(in: $0) }, onSubmit: submit)
             }
+            // The text's edge is the + glyph's, which sits centred in its own hover square.
+            .padding(.horizontal, Theme.Spacing.sm)
+            .padding(.top, Theme.Spacing.xs)
             controls
         }
-        .padding(Theme.Spacing.xl)
+        .padding(Theme.Spacing.md)
         .frostedPanel(
             in: RoundedRectangle(cornerRadius: Theme.Radius.dialog, style: .continuous))
+        .animation(.snappy, value: settings.webSearchEnabled)
     }
 
     @ViewBuilder private var chips: some View {
@@ -167,49 +185,58 @@ private struct AIChatComposer: View {
         }
     }
 
+    /// Search gives up its word before the model name starts to truncate.
     private var controls: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            ComposerIconButton(symbol: "paperclip", help: attachHelp) {
-                coordinator.chooseFiles(for: chat)
+        ViewThatFits(in: .horizontal) {
+            controlRow(compactSearch: false)
+            controlRow(compactSearch: true)
+        }
+    }
+
+    private func controlRow(compactSearch: Bool) -> some View {
+        let searches = coordinator.capabilities(for: chat).webSearch
+        return HStack(spacing: Theme.Spacing.xxs) {
+            AIAddMenu(chat: chat, coordinator: coordinator, settings: settings, offersSearch: searches)
+            if searches, settings.webSearchEnabled {
+                WebSearchPill(settings: settings, isCompact: compactSearch)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
+            Spacer(minLength: Theme.Spacing.md)
             AIModelPicker(chat: chat, selected: coordinator.model(for: chat), coordinator: coordinator)
+                .layoutPriority(-1)
             AIReasoningPicker(chat: chat, coordinator: coordinator)
-            AIToolsPicker(chat: chat, coordinator: coordinator)
-            if coordinator.capabilities(for: chat).webSearch {
-                WebSearchToggle(settings: settings)
-            }
-            Spacer(minLength: 0)
             ContextGauge(
                 report: coordinator.contextReport(for: chat, detailed: false), hovered: $showsContext)
-            sendButton
+            if coordinator.dictation.isEnabled {
+                DictationButton(
+                    dictation: coordinator.dictation, editor: editor,
+                    onNeedsModel: coordinator.showDictationSettings)
+            }
+            sendButton.padding(.leading, Theme.Spacing.sm)
         }
     }
 
-    /// One paperclip for every kind; what this chat's model can read is what the help says.
-    private var attachHelp: String {
-        let can = coordinator.capabilities(for: chat)
-        switch (can.images, can.documents) {
-        case (true, true): return "Attach images, PDFs or text files"
-        case (true, false): return "Attach images or text files"
-        case (false, true): return "Attach PDFs or text files"
-        case (false, false): return "Attach text files"
-        }
-    }
-
+    /// A solid disc, so Send is the one strong mark on a row of quiet controls.
     private var sendButton: some View {
-        Button(action: submit) {
-            Image(systemName: chat.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                .font(.title2)
-                .symbolRenderingMode(.hierarchical)
+        let enabled = chat.isStreaming || canSend
+        return Button(action: submit) {
+            Image(systemName: chat.isStreaming ? "stop.fill" : "arrow.up")
+                .font(chat.isStreaming ? Theme.Typography.composerStop : Theme.Typography.composerSend)
                 .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(enabled ? Theme.Colors.composerSendInk : Theme.Colors.textTertiary)
+                .frame(width: Theme.Size.aiChatComposerControl, height: Theme.Size.aiChatComposerControl)
+                .background(
+                    Circle().fill(enabled ? Theme.Colors.composerSend : Theme.Colors.controlSurface)
+                )
+                .contentShape(Circle())
         }
-        .buttonStyle(.borderless)
-        .disabled(!chat.isStreaming && !canSend)
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .animation(.easeOut(duration: Theme.Duration.hover), value: enabled)
         .help(chat.isStreaming ? "Stop Response" : "Send  ↵")
         .accessibilityLabel(chat.isStreaming ? "Stop Response" : "Send")
     }
 
-    /// Return and the button are one action: Send, or Stop while a reply streams.
     private func submit() {
         if chat.isStreaming {
             coordinator.stopResponse(in: chat)
@@ -219,18 +246,186 @@ private struct AIChatComposer: View {
     }
 }
 
-private struct ComposerIconButton: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
+private struct ComposerControlLabel<Icon: View>: View {
+    var title: String?
+    var showsChevron = true
+    @ViewBuilder let icon: Icon
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
+        HStack(spacing: Theme.Spacing.sm) {
+            if Icon.self != EmptyView.self {
+                icon.frame(width: Theme.Size.aiChatComposerGlyph, height: Theme.Size.aiChatComposerGlyph)
+            }
+            if let title {
+                Text(title)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(Theme.Typography.disclosure)
+                    .foregroundStyle(Theme.Colors.textTertiary)
+            }
         }
-        .buttonStyle(.borderless)
-        .help(help)
-        .accessibilityLabel(help)
+        .foregroundStyle(Theme.Colors.textSecondary)
+        .padding(.horizontal, title == nil && !showsChevron ? 0 : Theme.Spacing.md)
+        .frame(minWidth: Theme.Size.aiChatComposerControl)
+        .frame(height: Theme.Size.aiChatComposerControl)
+        .contentShape(Rectangle())
+        // One element: VoiceOver would otherwise read the mark and the chevron as menus of their own.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title ?? "")
+    }
+}
+
+extension ComposerControlLabel where Icon == EmptyView {
+    init(title: String) {
+        self.init(title: title) { EmptyView() }
+    }
+}
+
+private struct ComposerSymbol: View {
+    let name: String
+
+    var body: some View {
+        Image(systemName: name).font(Theme.Typography.composerSymbol)
+    }
+}
+
+/// Bare at rest and filled under the pointer, so the row reads as one line until it is used.
+private struct ComposerControlChrome: ViewModifier {
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.barControl, style: .continuous)
+        content
+            .background(shape.fill(hovered ? Theme.Colors.controlSurface : Color.clear))
+            .contentShape(shape)
+            .onHover { hovered = $0 }
+            .animation(.easeOut(duration: Theme.Duration.hover), value: hovered)
+    }
+}
+
+extension View {
+    fileprivate func composerControl() -> some View {
+        modifier(ComposerControlChrome())
+    }
+
+    /// A stock menu with Tinycast's own face, so its hover and sizes match the rest of the row.
+    fileprivate func composerMenu() -> some View {
+        menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .composerControl()
+    }
+}
+
+/// Files, web search and tools are set now and then, so one + holds them all.
+private struct AIAddMenu: View {
+    let chat: AIChatState
+    let coordinator: AIChatCoordinator
+    let settings: AISettingsStore
+    let offersSearch: Bool
+
+    var body: some View {
+        @Bindable var settings = settings
+        Menu {
+            Button("Attach Files…", systemImage: "paperclip") { coordinator.chooseFiles(for: chat) }
+                .help(attachHelp)
+            Divider()
+            if offersSearch {
+                Toggle("Web Search", systemImage: "globe", isOn: $settings.webSearchEnabled)
+            }
+            AIToolsMenu(chat: chat, coordinator: coordinator)
+        } label: {
+            ComposerControlLabel(showsChevron: false) { ComposerSymbol(name: "plus") }
+        }
+        .composerMenu()
+        .help("Attach files, search the web, choose tools")
+        .accessibilityLabel("Add")
+    }
+
+    /// One entry for every kind; what this chat's model can read is what the help says.
+    private var attachHelp: String {
+        let can = coordinator.capabilities(for: chat)
+        switch (can.images, can.documents) {
+        case (true, true): return String(localized: "Attach images, PDFs or text files")
+        case (true, false): return String(localized: "Attach images or text files")
+        case (false, true): return String(localized: "Attach PDFs or text files")
+        case (false, false): return String(localized: "Attach text files")
+        }
+    }
+}
+
+/// Only while Dictation is on: a click starts it into this field, another click inserts the text.
+private struct DictationButton: View {
+    let dictation: DictationCoordinator
+    let editor: ComposerTextViewHandle
+    let onNeedsModel: () -> Void
+
+    var body: some View {
+        let field = dictation.field
+        let session = field?.editor == editor.textView.map(ObjectIdentifier.init) ? field : nil
+        Button {
+            guard dictation.hasModel else { return onNeedsModel() }
+            if let textView = editor.textView { dictation.toggle(into: textView) }
+        } label: {
+            Group {
+                if session?.isTranscribing == true {
+                    ProgressView().controlSize(.small)
+                } else if session != nil {
+                    ComposerSymbol(name: "waveform")
+                        .symbolEffect(.variableColor.iterative)
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    ComposerSymbol(name: "mic")
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+            .frame(width: Theme.Size.aiChatComposerControl, height: Theme.Size.aiChatComposerControl)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .composerControl()
+        .disabled(session?.isTranscribing == true)
+        .help(help(session))
+        .accessibilityLabel(session == nil ? "Dictate" : "Stop Dictating")
+    }
+
+    private func help(_ session: DictationField?) -> String {
+        guard dictation.hasModel else {
+            return String(localized: "Download a dictation model in Settings")
+        }
+        guard let session else { return String(localized: "Dictate") }
+        return session.isTranscribing
+            ? String(localized: "Transcribing…") : String(localized: "Stop and insert the text  ↵")
+    }
+}
+
+private struct WebSearchPill: View {
+    let settings: AISettingsStore
+    let isCompact: Bool
+
+    var body: some View {
+        Button {
+            settings.webSearchEnabled = false
+        } label: {
+            HStack(spacing: Theme.Spacing.xs) {
+                ComposerSymbol(name: "globe")
+                    .frame(width: Theme.Size.aiChatComposerGlyph, height: Theme.Size.aiChatComposerGlyph)
+                if !isCompact { Text("Search").font(.callout) }
+            }
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, isCompact ? 0 : Theme.Spacing.md)
+            .frame(minWidth: Theme.Size.aiChatComposerControl)
+            .frame(height: Theme.Size.aiChatComposerControl)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .composerControl()
+        .help("Web search is on; click to turn it off")
+        .accessibilityLabel("Web search is on")
     }
 }
 
@@ -268,14 +463,14 @@ private struct AIModelPicker: View {
                 Button("Configure AI…", action: coordinator.showSettings)
             }
         } label: {
-            Label {
-                Text(coordinator.modelTitle(of: selected, among: groups.flatMap(\.options)))
-            } icon: {
-                MenuIconImage(icon: coordinator.modelIcon(of: selected))
+            ComposerControlLabel(
+                title: coordinator.modelTitle(of: selected, among: groups.flatMap(\.options))
+            ) {
+                MenuIconImage(icon: coordinator.modelIcon(of: selected), edge: Theme.Size.menuBrandIcon)
+                    .font(Theme.Typography.composerSymbol)
             }
-            .labelStyle(.titleAndIcon)
         }
-        .composerPill()
+        .composerMenu()
         .help("Switch this chat's model")
     }
 }
@@ -297,20 +492,19 @@ private struct AIReasoningPicker: View {
                         set: { if $0 { coordinator.selectReasoningEffort(effort, in: chat) } }))
             }
         } label: {
-            Label(
-                efforts.isEmpty ? "Reasoning" : coordinator.selectedReasoningTitle(for: chat),
-                systemImage: "brain"
-            )
-            .labelStyle(.titleAndIcon)
+            // A word, not a glyph: beside the model's name it already reads as that model's setting.
+            ComposerControlLabel(
+                title: efforts.isEmpty
+                    ? String(localized: "Reasoning") : coordinator.selectedReasoningTitle(for: chat))
         }
-        .composerPill()
+        .composerMenu()
         .disabled(efforts.isEmpty)
         .help(efforts.isEmpty ? "This model has no reasoning setting" : "Change reasoning effort")
     }
 }
 
 /// This chat's MCP servers: all of them, some, or none; the model must be one that calls tools.
-private struct AIToolsPicker: View {
+private struct AIToolsMenu: View {
     let chat: AIChatState
     let coordinator: AIChatCoordinator
 
@@ -344,21 +538,16 @@ private struct AIToolsPicker: View {
             Button("MCP Settings…", action: coordinator.showMCPSettings)
         } label: {
             Label(
-                servers.isEmpty || !scope.isEnabled ? "Tools" : "\(active) of \(servers.count)",
-                systemImage: "wrench.and.screwdriver"
-            )
-            .labelStyle(.titleAndIcon)
+                !takesTools
+                    ? "Tools · Not with this model"
+                    : servers.isEmpty || !scope.isEnabled
+                        ? "Tools · Off" : "Tools · \(active) of \(servers.count)",
+                systemImage: "wrench.and.screwdriver")
         }
-        .composerPill()
         .disabled(!takesTools)
-        .help(
-            takesTools
-                ? "Choose the tools this chat may call"
-                : "This model can't call tools")
     }
 }
 
-/// Where find is in the open chat, with the same steps ⌘G and ⇧⌘G take.
 private struct FindCounter: View {
     let position: Int
     let count: Int
@@ -392,40 +581,17 @@ private struct FindCounter: View {
     }
 }
 
-/// The same switch as Settings → AI's: a prompt reaches a search engine only once it is on.
-private struct WebSearchToggle: View {
-    let settings: AISettingsStore
-
-    var body: some View {
-        @Bindable var settings = settings
-        Toggle(isOn: $settings.webSearchEnabled) {
-            Image(systemName: "globe")
-        }
-        .toggleStyle(.button)
-        .buttonStyle(.borderless)
-        .help(settings.webSearchEnabled ? "Web search is on" : "Web search is off")
-        .accessibilityLabel("Web search")
-    }
-}
-
-/// A ring for the share of the context in use; hovering it raises the composer's context card.
 private struct ContextGauge: View {
     let report: ChatContextReport
     @Binding var hovered: Bool
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.xs) {
-            ContextRing(fill: min(max(report.fill, 0), 1), tint: report.tint)
-            Text(report.fill.formatted(.percent.precision(.fractionLength(0))))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, Theme.Spacing.xs)
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(report.accessibilitySummary)
+        ContextRing(fill: min(max(report.fill, 0), 1), tint: report.tint)
+            .frame(width: Theme.Size.aiChatComposerControl, height: Theme.Size.aiChatComposerControl)
+            .composerControl()
+            .onHover { hovered = $0 }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(report.accessibilitySummary)
     }
 }
 
@@ -463,7 +629,7 @@ private struct ContextCard: View {
             ProgressView(value: min(report.fill, 1))
                 .tint(report.tint)
             if report.historyBytes > report.budget {
-                Text("The oldest messages no longer fit and are left out.")
+                Text("The oldest messages are no longer sent to the model.")
                     .font(.caption)
                     .foregroundStyle(Theme.Colors.destructive)
             }
@@ -483,20 +649,31 @@ private struct ContextCard: View {
                                 .currency(code: "USD").precision(.significantDigits(2))))
                     }
                 } else {
-                    row("Last reply", "Not reported yet")
+                    row("Last reply", String(localized: "Not reported yet"))
                 }
                 section("Next message")
                 row("Model", report.modelTitle)
-                row("History", "\(bytes(report.historyBytes)) of \(bytes(report.budget))")
-                row("Messages", "\(report.sentMessages) of \(report.totalMessages)")
+                row(
+                    "History",
+                    String(localized: "\(bytes(report.historyBytes)) of \(bytes(report.budget))"))
+                row("Messages", String(localized: "\(report.sentMessages) of \(report.totalMessages)"))
                 if report.stagedFiles > 0 {
                     row("Attached", "\(report.stagedFiles) · \(bytes(report.stagedBytes))")
                 }
-                row("System prompt", report.systemPrompt ? "On" : "Off")
-                row("Web search", report.webSearch ? "On" : "Off")
+                row(
+                    "System prompt",
+                    report.systemPrompt
+                        ? String(localized: "ai-system-prompt-on", defaultValue: "On")
+                        : String(localized: "ai-system-prompt-off", defaultValue: "Off"))
+                row(
+                    "Web search",
+                    report.webSearch
+                        ? String(localized: "ai-web-search-on", defaultValue: "On")
+                        : String(localized: "ai-web-search-off", defaultValue: "Off"))
                 row(
                     "MCP servers",
-                    report.toolServers == 0 ? "None" : "\(report.toolServers) in reach")
+                    report.toolServers == 0
+                        ? String(localized: "None") : String(localized: "\(report.toolServers) in reach"))
             }
             .font(.callout)
         }
@@ -508,9 +685,9 @@ private struct ContextCard: View {
         .shadow(color: Theme.Colors.tooltipShadow, radius: Theme.Spacing.xl, y: Theme.Spacing.xs)
     }
 
-    private func section(_ title: String) -> some View {
+    private func section(_ title: LocalizedStringResource) -> some View {
         GridRow {
-            Text(title.uppercased())
+            Text(String(localized: title).uppercased())
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .gridCellColumns(2)
@@ -518,7 +695,7 @@ private struct ContextCard: View {
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
+    private func row(_ label: LocalizedStringResource, _ value: String) -> some View {
         GridRow {
             Text(label).foregroundStyle(.secondary)
             Text(value).monospacedDigit().lineLimit(1).truncationMode(.middle)
@@ -531,19 +708,20 @@ private struct ContextCard: View {
 
     private func tokens(_ count: Int, of window: Int?) -> String {
         guard let window else { return count.formatted() }
-        return "\(count.formatted()) of \(window.formatted(.number.notation(.compactName)))"
+        return String(
+            localized: "\(count.formatted()) of \(window.formatted(.number.notation(.compactName)))")
     }
 
     private func input(_ usage: AIUsage) -> String {
         let prompt = (usage.inputTokens ?? 0) + (usage.cachedInputTokens ?? 0)
         guard let cached = usage.cachedInputTokens, cached > 0 else { return prompt.formatted() }
-        return "\(prompt.formatted()) · \(cached.formatted()) cached"
+        return String(localized: "\(prompt.formatted()) · \(cached.formatted()) cached")
     }
 
     private func output(_ usage: AIUsage) -> String {
         let output = usage.outputTokens ?? 0
         guard let thinking = usage.reasoningTokens, thinking > 0 else { return output.formatted() }
-        return "\(output.formatted()) · \(thinking.formatted()) thinking"
+        return String(localized: "\(output.formatted()) · \(thinking.formatted()) thinking")
     }
 }
 
@@ -554,28 +732,17 @@ extension ChatContextReport {
     }
 }
 
-extension View {
-    /// The composer's menus read as options, not links: a capsule the size of the row.
-    fileprivate func composerPill() -> some View {
-        menuStyle(.button)
-            .glassButtonStyle()
-            .buttonBorderShape(.capsule)
-            .fixedSize()
-    }
-}
-
 /// A menu draws an image at its own size, so a brand mark is redrawn at the symbols' size.
 private struct MenuIconImage: View {
     let icon: PopoverMenuIcon
-
-    private static let edge: CGFloat = 16
+    var edge: CGFloat = 16
 
     var body: some View {
         switch icon {
         case .symbol(let name):
             Image(systemName: name)
         case .asset(let name):
-            if let image = Self.sized(name) {
+            if let image = Self.sized(name, edge: edge) {
                 Image(nsImage: image)
             } else {
                 Image(systemName: "sparkles")
@@ -585,7 +752,7 @@ private struct MenuIconImage: View {
         }
     }
 
-    private static func sized(_ name: String) -> NSImage? {
+    private static func sized(_ name: String, edge: CGFloat) -> NSImage? {
         guard let source = NSImage(named: name) else { return nil }
         let size = NSSize(width: edge, height: edge)
         let image = NSImage(size: size, flipped: false) { rect in

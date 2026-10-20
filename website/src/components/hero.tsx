@@ -1,6 +1,7 @@
 import { ArrowRight, Download } from "lucide-react";
 import { brewInstallCommand, brewTrustCommand, hero, site } from "../data/site";
 import { latestVersion } from "../lib/version";
+import { Badges } from "./badges";
 import { HeroPalette } from "./hero-palette";
 import { Button } from "./ui/button";
 import { CommandLine } from "./ui/command-line";
@@ -17,7 +18,7 @@ export async function Hero() {
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-40 right-[-10%] h-[520px] w-[720px] rounded-full opacity-35 blur-3xl"
+        className="pointer-events-none absolute -top-40 right-[-10%] h-130 w-180 rounded-full opacity-35 blur-3xl"
         style={{
           background:
             "radial-gradient(closest-side, color-mix(in srgb, var(--color-violet) 55%, transparent), transparent)",
@@ -94,12 +95,16 @@ export async function Hero() {
               <li key={fact}>{fact}</li>
             ))}
           </ul>
+
+          <div className="rise mt-8" style={{ animationDelay: "360ms" }}>
+            <Badges />
+          </div>
         </div>
 
         {/* Tilted, never floating: the palette is a backdrop-filter surface, and
             animating its transform repaints the blur on every frame. */}
         <div
-          className="rise min-w-0 lg:rotate-[-1deg]"
+          className="rise min-w-0 lg:-rotate-1"
           style={{ animationDelay: "120ms" }}
         >
           <HeroPalette />

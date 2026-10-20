@@ -54,14 +54,18 @@ struct AIChatTests {
         renamesAndPinsSurviveSavesAndSpareRetention()
         transcriptsExportAndDropOnlyATrailingReply()
         await regenerateAsksTheSameQuestionAgain()
+        await requestsIdentifyTheirConversation()
         await aConversationIsLiveOnOneSurfaceAtATime()
+        await theWindowFollowsTheOpenPolicy()
         await everyStateReportsAFinishedReply()
         await reasoningFoldsIntoTheReplyAndIsNeverResent()
+        reasoningShowsWithoutItsClosingBlankLines()
         chatsKeepTheirOwnModel()
         choicesComeOutOfTheirFence()
         referencesAreTheLinksAReplyCites()
         titlesAreCleanedAndNeverBeatARename()
         findWalksMatchesAndWraps()
+        chatStepsFollowTheSidebarAndWrap()
         citationsCloseTheSentenceThatCitedThem()
         toolScopeSwitchesServersPerChat()
         await usageIsKeptWithTheReplyThatReportedIt()
@@ -70,7 +74,6 @@ struct AIChatTests {
         if failures > 0 { exit(1) }
     }
 
-    /// A reply that searched and called tools has to render them in the order they happened.
     static func segmentsInterleaveSearchesAndTools() {
         let message = ChatMessage(
             role: .assistant, text: "abcdef",
@@ -158,7 +161,6 @@ struct AIChatTests {
             "at one offset a call, a search and a call keep the order they came in")
     }
 
-    /// Created live, stored and reloaded: the order has to come through all three.
     static func arrivalOrderSurvivesTheReplyAndReload() async {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("tinycast-ai-order-\(UUID().uuidString)", isDirectory: true)
@@ -663,8 +665,8 @@ struct AIChatTests {
             "attached images travel with the request")
         expect(loaded?.messages.last?.state == .failed, "an interrupted stream is repaired")
         expect(
-            loaded?.messages.last?.text == "Partial",
-            "an interrupted partial answer is preserved")
+            loaded?.messages.last?.text == "Partial\n\nResponse interrupted.",
+            "an interrupted partial answer is kept and closed by a note, as a cancel's is")
 
         reopened.remove(id: id)
         expect(reopened.conversations.isEmpty, "deleting a chat removes its summary")
@@ -1148,7 +1150,6 @@ struct AIChatTests {
             "a search at the start or past the end never produces an empty text segment")
     }
 
-    /// Leaving a conversation drops its staged images and disowns a decode in flight.
     static func leavingAConversationDropsItsStagedImages() {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("tinycast-ai-staging-\(UUID().uuidString)", isDirectory: true)
@@ -1346,6 +1347,30 @@ extension AIChatTests {
             "the stored transcript holds only the new reply")
     }
 
+    static func requestsIdentifyTheirConversation() async {
+        let (store, directory) = temporaryStore("conversation-id")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let chat = AIChatState(history: store)
+        let provider = ScriptedProvider(rounds: [[.text("First"), .finished], [.text("Second"), .finished]])
+        let firstID = chat.session.id
+        chat.send("Research", using: provider)
+        await settle(chat)
+        chat.send("Elaborate", using: provider)
+        await settle(chat)
+        expect(
+            provider.requests.map(\.conversationID) == [firstID, firstID],
+            "follow-ups identify the same conversation")
+        let continued = provider.requests[0].continuing(with: provider.requests[0].messages, tools: [])
+        expect(continued.conversationID == firstID, "tool rounds keep the conversation identity")
+        chat.startNewChat()
+        chat.send("Start again", using: provider)
+        await settle(chat)
+        expect(
+            provider.requests.last?.conversationID != firstID,
+            "a new chat cannot inherit another chat's context")
+        expect(AIRequest(messages: []).conversationID == nil, "standalone generations have no chat context")
+    }
+
     /// Naming hangs off this hook, so a state made after it is set must be told too.
     static func everyStateReportsAFinishedReply() async {
         let (store, directory) = temporaryStore("finished")
@@ -1364,6 +1389,83 @@ extension AIChatTests {
         chats.quickAI.send("Fails", using: ScriptedProvider(rounds: [[.text("Half")]]))
         await settle(chats.quickAI)
         expect(finished.count == 3, "a reply that failed is not one to name a chat by")
+    }
+
+    static func theWindowFollowsTheOpenPolicy() async {
+        let (store, directory) = temporaryStore("window-open")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let chats = AIChatSurfacesState(history: store)
+        let later = Date().addingTimeInterval(10 * 60)
+
+        let first = chats.window
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes)
+        expect(chats.window === first, "with nothing saved the window opens on its own empty chat")
+
+        let recent = saved(store, "last question", at: Date().addingTimeInterval(-60))
+        chats.window.draft = "half a line"
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes)
+        expect(
+            chats.window === first && first.draft == "half a line",
+            "an empty chat's unsent line is not traded for a saved chat")
+        chats.window.draft = ""
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes)
+        expect(chats.window.holds(recent), "Recent Conversation opens the newest saved chat")
+
+        let shown = chats.window
+        shown.draft = "a follow-up"
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes)
+        expect(
+            chats.window === shown && shown.draft == "a follow-up",
+            "a recent chat reopens as it was, unsent line and all")
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .never, now: later)
+        expect(chats.window === shown, "never starting a new one keeps resuming")
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes, now: later)
+        expect(
+            chats.window === shown && shown.draft == "a follow-up",
+            "a chat idle past the limit still keeps the line typed in it")
+        chats.applyWindowOpenPolicy(opensTo: .newConversation, newAfter: .fiveMinutes, now: later)
+        expect(
+            chats.window === shown && shown.draft == "a follow-up",
+            "A New Conversation keeps the typed line as well")
+        shown.draft = ""
+        shown.attach(
+            ChatAttachment(
+                payload: .image(AIImage(data: Data([0x89, 1]), mimeType: "image/png")),
+                name: "shot.png", preview: nil))
+        chats.applyWindowOpenPolicy(opensTo: .newConversation, newAfter: .fiveMinutes, now: later)
+        expect(
+            chats.window === shown && shown.pendingAttachments.count == 1,
+            "staged files are kept whichever way the policy goes")
+        shown.removeLastAttachment()
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .fiveMinutes, now: later)
+        expect(
+            chats.window !== shown && chats.window.session.messages.isEmpty,
+            "with nothing unsent, a chat idle past the limit gives way to a new one")
+
+        chats.openInWindow(id: recent)
+        chats.applyWindowOpenPolicy(opensTo: .newConversation, newAfter: .never)
+        expect(
+            !chats.window.holds(recent) && chats.window.session.messages.isEmpty,
+            "A New Conversation always starts one")
+        let blank = chats.window
+        blank.draft = "kept"
+        chats.applyWindowOpenPolicy(opensTo: .newConversation, newAfter: .fiveMinutes)
+        expect(chats.window === blank && blank.draft == "kept", "an empty chat is already new")
+
+        expect(chats.openInQuickAI(id: recent), "Quick AI takes the saved chat")
+        blank.draft = ""
+        chats.applyWindowOpenPolicy(opensTo: .recent, newAfter: .never)
+        expect(
+            chats.window === blank && chats.quickAI.holds(recent),
+            "the window leaves a chat Quick AI holds where it is")
+
+        let stalled = StalledProvider()
+        chats.window.send("Still going", using: stalled)
+        let answering = chats.window
+        chats.applyWindowOpenPolicy(opensTo: .newConversation, newAfter: .fiveMinutes)
+        expect(chats.window === answering, "a reply still arriving is not replaced")
+        stalled.finishAll()
+        await settle(answering)
     }
 
     /// Two surfaces editing one transcript would each save over the other.
@@ -1444,7 +1546,17 @@ extension AIChatTests {
             "reasoning survives reopening the chat")
     }
 
-    /// Coming back to a chat has to come back to the model it was talking to.
+    static func reasoningShowsWithoutItsClosingBlankLines() {
+        func shown(_ text: String) -> String {
+            ChatReasoning(text: text, textOffset: 0, duration: 1).displayText
+        }
+        expect(shown("Let me see.\n\n") == "Let me see.", "closing blank lines are not drawn")
+        expect(shown("One.\n\nTwo. \n \t\n") == "One.\n\nTwo.", "only the end is trimmed")
+        expect(shown("  Indented\nlines") == "  Indented\nlines", "the start and the middle are kept")
+        expect(shown(" \n\n") == "", "a block of nothing shows nothing")
+        expect(shown("") == "", "an empty block stays empty")
+    }
+
     static func chatsKeepTheirOwnModel() {
         let (store, directory) = temporaryStore("model")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1561,6 +1673,27 @@ extension AIChatTests {
         expect(find.current == 0, "a new query starts at its first match")
     }
 
+    static func chatStepsFollowTheSidebarAndWrap() {
+        func conversation(pinned: Bool = false) -> ChatConversation {
+            ChatConversation(
+                id: UUID(), title: "", preview: "", createdAt: .distantPast, updatedAt: .distantPast,
+                messageCount: 2, isPinned: pinned)
+        }
+        let newest = conversation()
+        let pinned = conversation(pinned: true)
+        let oldest = conversation()
+        let ordered = [newest, pinned, oldest].pinnedFirst
+        expect(ordered.map(\.id) == [pinned.id, newest.id, oldest.id], "pins lead, recency holds")
+
+        expect(ordered.adjacent(to: pinned.id, step: 1) == newest, "a step goes one row down")
+        expect(ordered.adjacent(to: oldest.id, step: 1) == pinned, "the last row wraps to the top")
+        expect(ordered.adjacent(to: pinned.id, step: -1) == oldest, "the top wraps back to the end")
+        expect(ordered.adjacent(to: UUID(), step: 1) == pinned, "an unsaved chat steps to the top")
+        expect(ordered.adjacent(to: UUID(), step: -1) == oldest, "or back to the bottom")
+        expect([pinned].adjacent(to: pinned.id, step: 1) == nil, "a lone chat stays where it is")
+        expect([ChatConversation]().adjacent(to: UUID(), step: 1) == nil, "no chats, no step")
+    }
+
     static func citationsCloseTheSentenceThatCitedThem() {
         let text = MarkdownBlock.inline(
             "Read [the guide](https://example.com/guide) first. Then see https://example.org/faq.")
@@ -1617,6 +1750,42 @@ extension AIChatTests {
         expect(
             ChatChoices.split("**Choices:**\n1. Yes\n2. No").choices == ["Yes", "No"],
             "the label may be bold, capitalised or end in a colon")
+
+        let wrapped = ChatChoices.split(
+            "```markdown\n- Intro\n```\n```\nchoices\n1. Open it\n2. Close it\n```\n```")
+        expect(
+            wrapped.choices == ["Open it", "Close it"],
+            "a label and its list may sit inside a bare fence: \(wrapped)")
+        expect(
+            wrapped.text == "```markdown\n- Intro\n```",
+            "the fence round the options goes with them and the model's own block stays: \(wrapped)")
+        let wrappedStreaming = ChatChoices.split("Intro\n```\nchoices\n- A")
+        expect(
+            wrappedStreaming.choices == ["A"] && wrappedStreaming.text == "Intro",
+            "a fenced label is already hidden while it streams: \(wrappedStreaming)")
+        let stray = ChatChoices.split("Pick:\n```choices\nA\nB\n```\n```")
+        expect(
+            stray.choices == ["A", "B"] && stray.text == "Pick:",
+            "a stray fence after the options draws no empty box: \(stray)")
+        let kept = ChatChoices.split("Use:\n```swift\nlet a = 1\n```\n\n```choices\nA\n```")
+        expect(
+            kept.text == "Use:\n```swift\nlet a = 1\n```",
+            "a closed code block before the options is kept: \(kept)")
+        let nested = ChatChoices.split("````markdown\n```\n````\n```choices\nA\n```")
+        expect(
+            nested.choices == ["A"] && nested.text == "````markdown\n```\n````",
+            "a longer fence holding a shorter one keeps its closing line: \(nested)")
+        let nestedLabel = ChatChoices.split("````markdown\n```\n````\nchoices\n- A\n- B")
+        expect(
+            nestedLabel.choices == ["A", "B"] && nestedLabel.text == "````markdown\n```\n````",
+            "a label after a closed nested block is still a label: \(nestedLabel)")
+        let example = "```markdown\nchoices\n- A\n- B\n```"
+        expect(
+            ChatChoices.split(example).choices.isEmpty && ChatChoices.split(example).text == example,
+            "an example of the label inside a language fence stays code: \(ChatChoices.split(example))")
+        expect(
+            ChatChoices.split("```python\nx = 1\nchoices\n- a").choices.isEmpty,
+            "a label inside another open code block is code, not a choice list")
         let proseAfter = "choices\n- A\n- B\n\nThat is all."
         expect(
             ChatChoices.split(proseAfter).choices.isEmpty, "a list followed by prose is not the reply's end")

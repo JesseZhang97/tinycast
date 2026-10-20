@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Owns the check-yourself panel: one at a time, and the camera stops with it.
 @MainActor
-final class CameraPreviewController: NSObject, NSWindowDelegate {
+final class CameraPreviewController {
     private let session = CameraSession()
     private var panel: CameraPanel?
     private var continuation: CheckedContinuation<Bool, Never>?
@@ -30,15 +30,12 @@ final class CameraPreviewController: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(rootView: view)
         hosting.setFrameSize(hosting.fittingSize)
         let panel = CameraPanel(content: hosting)
-        panel.delegate = self
-        panel.onKey = { [weak self] key in self?.finish(key == .primary) }
+        panel.onAction = { [weak self] action in self?.finish(action == .primary) }
         self.panel = panel
         panel.centerOnCursorScreen()
         // Non-activating like the palette: key focus without pulling the user out of their app.
-        panel.fadeIn(duration: Theme.Duration.enter) {
-            panel.makeKeyAndOrderFront(nil)
-            panel.orderFrontRegardless()
-        }
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
     }
 
     private func finish(_ taken: Bool) {
@@ -46,22 +43,13 @@ final class CameraPreviewController: NSObject, NSWindowDelegate {
         self.continuation = nil
         let closing = panel
         panel = nil
-        closing?.delegate = nil
-        closing?.onKey = nil
+        closing?.onAction = nil
         continuation.resume(returning: taken)
-        // The camera goes with the panel, not before it: tearing it down mid-fade blanks the feed.
-        closing?.fadeOut(duration: Theme.Duration.exit) { [weak self] in
-            // Unless a preview raised inside the fade already owns the camera.
+        // The camera goes with the panel, not before it: tearing it down mid-close blanks the feed.
+        closing?.orderOutAnimated { [weak self] in
+            // Unless a preview raised inside the close already owns the camera.
             guard let self, !presenting else { return }
             session.stop()
         }
-    }
-
-    // MARK: - NSWindowDelegate
-
-    /// Click-away drops the join rather than leaving a camera running behind another window.
-    func windowDidResignKey(_ notification: Notification) {
-        guard let panel, notification.object as? NSWindow === panel else { return }
-        finish(false)
     }
 }

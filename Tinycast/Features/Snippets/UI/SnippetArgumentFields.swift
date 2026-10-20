@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The `{argument}` values a snippet still needs; reference semantics let the caller read them back.
+/// A class, so the caller can read the `{argument}` values back after the dialog.
 @MainActor
 @Observable
 final class SnippetArgumentsState {
@@ -16,11 +16,9 @@ final class SnippetArgumentsState {
     }
 }
 
-/// The snippet argument dialog's controls: a field per free argument, chips per options list.
 struct SnippetArgumentFields: View {
     @Environment(\.metrics) private var metrics
     let state: SnippetArgumentsState
-    @FocusState private var focusedArgument: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.spacing.xl) {
@@ -34,7 +32,6 @@ struct SnippetArgumentFields: View {
                             "", text: value(for: argument.name),
                             prompt: Text(argument.name)
                         )
-                        .focused($focusedArgument, equals: argument.name)
                         .dialogTextField()
                     } else {
                         OptionChips(
@@ -46,7 +43,6 @@ struct SnippetArgumentFields: View {
                 .accessibilityLabel("Snippet argument \(argument.name)")
             }
         }
-        .onAppear { focusedArgument = state.arguments.first { $0.options.isEmpty }?.name }
     }
 
     private func value(for name: String) -> Binding<String> {

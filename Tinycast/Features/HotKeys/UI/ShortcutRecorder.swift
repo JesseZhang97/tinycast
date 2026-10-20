@@ -37,7 +37,6 @@ struct ShortcutRecorder: View {
             .contentShape(shape)
             .onTapGesture { hotKeys.recordingAction = isRecording ? nil : action }
             .onHover { hovered = $0 }
-            // Hand the callout this field's bounds while it's the open one.
             .anchorPreference(key: ShortcutRecorderAnchorKey.self, value: .bounds) {
                 isRecording ? $0 : nil
             }
@@ -55,7 +54,7 @@ struct ShortcutRecorder: View {
         if let binding = hotKeys.binding(for: action) {
             boundLabel(binding)
         } else {
-            Text(isRecording ? "Listening…" : "Record Hotkey")
+            Text(isRecording ? "Waiting for a shortcut…" : "Record Hotkey")
                 .font(Theme.Typography.keyCap)
                 .foregroundStyle(unsetInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -76,21 +75,25 @@ struct ShortcutRecorder: View {
                 .accessibilityLabel("Open Accessibility settings")
                 .help("Modifier-only hotkeys need Accessibility access. Click to grant it.")
             }
-            ForEach(Array(binding.keycaps.enumerated()), id: \.offset) { _, cap in
-                Text(cap)
-                    .font(Theme.Typography.keyCap)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, Theme.Spacing.xs)
-                    .frame(
-                        minWidth: Theme.Size.recorderKeyCap, minHeight: Theme.Size.recorderKeyCap
-                    )
-                    .background(
-                        RoundedRectangle(
-                            cornerRadius: Theme.Radius.recorderKeyCap, style: .continuous
+            HStack(spacing: Theme.Spacing.xs) {
+                ForEach(Array(binding.recorderKeycaps.enumerated()), id: \.offset) { _, cap in
+                    KeyCapChip.Label(text: cap, prefix: binding.recorderPrefix)
+                        .font(Theme.Typography.keyCap)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, Theme.Spacing.xs)
+                        .frame(
+                            minWidth: Theme.Size.recorderKeyCap, minHeight: Theme.Size.recorderKeyCap
                         )
-                        .fill(Color.primary.opacity(0.08))
-                    )
+                        .background(
+                            RoundedRectangle(
+                                cornerRadius: Theme.Radius.recorderKeyCap, style: .continuous
+                            )
+                            .fill(Color.primary.opacity(0.08))
+                        )
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(KeyCapChip.inlineText(binding.keycaps, separator: " "))
         }
         .frame(maxWidth: .infinity)
         // Overlaid, not a row member, so it costs the caps no width.

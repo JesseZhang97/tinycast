@@ -5,7 +5,6 @@ import Carbon.HIToolbox
 @MainActor
 @Observable
 final class ShortcutCaptureSession {
-    /// A rejected binding and whoever already holds it.
     struct Conflict: Equatable {
         let binding: HotKeyBinding
         let owner: String
@@ -13,23 +12,34 @@ final class ShortcutCaptureSession {
 
     private(set) var heldModifiers: NSEvent.ModifierFlags = []
     private(set) var heldGlobe = false
-    private(set) var awaitingSecondGlobe = false
+    private(set) var heldModifier: ModifierKey?
+    private(set) var awaitingSecondModifier: ModifierKey?
     private(set) var conflict: Conflict?
 
+    /// The applied Hyper route, read here too because Secure Input hides keystrokes from the tap.
+    @ObservationIgnored var hyperRoute: HyperKeyRoute? {
+        didSet { if hyperRoute != oldValue { hyperKeyDown = false } }
+    }
+    @ObservationIgnored private var hyperKeyDown = false
+
     private static let conflictDwell: Duration = .seconds(1.5)
+    private static let chordModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
     @ObservationIgnored private var monitors: [Any] = []
     @ObservationIgnored private var resignObserver: NSObjectProtocol?
     @ObservationIgnored private var conflictReset: Task<Void, Never>?
-    @ObservationIgnored private var globeCommit: Task<Void, Never>?
+    @ObservationIgnored private var modifierCommit: Task<Void, Never>?
     @ObservationIgnored private weak var activeRecorderView: NSView?
     /// The same recognizer the global monitor uses, so recording needs no tap and no grant.
-    @ObservationIgnored private var detector = DoubleTapDetector()
-    @ObservationIgnored private var globeDetector = GlobeTapDetector()
+    @ObservationIgnored private var detector = ModifierKeyDetector()
 
     func start(action: HotKeyAction, hotKeys: HotKeyManager) {
         stop()
-        heldModifiers = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
+        heldModifiers = NSEvent.modifierFlags.intersection(Self.chordModifiers)
+        _ = detector.handle(
+            ModifierKey.held(in: UInt64(NSEvent.modifierFlags.rawValue), globeDown: false),
+            at: ProcessInfo.processInfo.systemUptime)
+        detector.cancel()
 
         // Main-thread handlers that predate actor annotations; only Sendable pieces cross in.
         if let monitor = NSEvent.addLocalMonitorForEvents(
@@ -37,14 +47,24 @@ final class ShortcutCaptureSession {
             handler: { [weak self, weak hotKeys] event in
                 let keyCode = Int(event.keyCode)
                 let flags = event.modifierFlags
-                let timestamp = event.timestamp
                 MainActor.assumeIsolated {
                     guard let self, let hotKeys else { return }
                     self.handleKeyDown(
-                        keyCode: keyCode, flags: flags, at: timestamp, action: action,
+                        keyCode: keyCode, flags: flags, action: action,
                         hotKeys: hotKeys)
                 }
                 return nil  // always consume: no beeps, no leaking keys to the window
+            })
+        {
+            monitors.append(monitor)
+        }
+
+        if let monitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyUp,
+            handler: { [weak self] event in
+                let keyCode = Int(event.keyCode)
+                MainActor.assumeIsolated { self?.handleKeyUp(keyCode: keyCode) }
+                return event
             })
         {
             monitors.append(monitor)
@@ -55,18 +75,14 @@ final class ShortcutCaptureSession {
             handler: { [weak self, weak hotKeys] event in
                 let all = event.modifierFlags
                 let keyCode = Int(event.keyCode)
-                let flags = all.intersection([.command, .option, .control, .shift])
-                // `.function` only: `.capsLock` is the latch, and would refuse every double-tap.
-                let hasOthers = all.contains(.function)
                 let timestamp = event.timestamp
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.heldModifiers = flags
+                    self.heldModifiers = self.hyperized(all).intersection(Self.chordModifiers)
                     if keyCode == kVK_Function { self.heldGlobe = all.contains(.function) }
                     guard let hotKeys else { return }
                     self.handleModifiers(
-                        flags, isGlobeKey: keyCode == kVK_Function,
-                        functionDown: all.contains(.function), hasOtherModifiers: hasOthers,
+                        all.rawValue,
                         at: timestamp, action: action,
                         hotKeys: hotKeys)
                 }
@@ -105,12 +121,13 @@ final class ShortcutCaptureSession {
         }
         conflictReset?.cancel()
         conflictReset = nil
-        cancelGlobeCommit()
+        cancelModifierCommit()
         conflict = nil
         heldModifiers = []
         heldGlobe = false
+        heldModifier = nil
+        hyperKeyDown = false
         detector.reset()
-        globeDetector.cancel()
         activeRecorderView = nil
     }
 
@@ -128,23 +145,26 @@ final class ShortcutCaptureSession {
     }
 
     private func handleKeyDown(
-        keyCode: Int, flags: NSEvent.ModifierFlags, at timestamp: TimeInterval,
+        keyCode: Int, flags: NSEvent.ModifierFlags,
         action: HotKeyAction, hotKeys: HotKeyManager
     ) {
         // A key press makes any modifier held at the moment part of a combo, not a tap.
-        _ = detector.handle(.otherInput, at: timestamp)
-        cancelGlobeCommit()
-        globeDetector.cancel()
+        detector.cancel()
+        cancelModifierCommit()
+        if isHyperKey(keyCode) {
+            hyperKeyDown = true
+            heldModifiers = hyperized(flags).intersection(Self.chordModifiers)
+            return
+        }
 
         // F-keys also carry `.function`; only the physical Globe press makes it a modifier.
-        let flags = heldGlobe ? flags.union(.function) : flags.subtracting(.function)
+        let flags = hyperized(heldGlobe ? flags.union(.function) : flags.subtracting(.function))
         let bareKey = flags.isDisjoint(with: [.command, .option, .control, .shift, .function])
 
         if bareKey, keyCode == kVK_Escape {
             hotKeys.recordingAction = nil
             return
         }
-        // Plain Delete clears the existing binding.
         if bareKey, keyCode == kVK_Delete || keyCode == kVK_ForwardDelete {
             hotKeys.setBinding(nil, for: action)
             hotKeys.recordingAction = nil
@@ -155,63 +175,60 @@ final class ShortcutCaptureSession {
         commit(.combo(shortcut), action: action, hotKeys: hotKeys)
     }
 
+    private func handleKeyUp(keyCode: Int) {
+        guard isHyperKey(keyCode) else { return }
+        hyperKeyDown = false
+        heldModifiers = NSEvent.modifierFlags.intersection(Self.chordModifiers)
+    }
+
+    private func isHyperKey(_ keyCode: Int) -> Bool {
+        guard let hyperRoute else { return false }
+        return hyperRoute.modifier == nil && keyCode == hyperRoute.tapKeyCode
+    }
+
+    private func hyperized(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        guard let hyperRoute, let chord = KeyShortcut.displayedHyperChord(),
+            hyperKeyDown || hyperRoute.modifier?.isHeld(in: UInt64(flags.rawValue)) == true
+        else { return flags }
+        let own = hyperRoute.key.ownFlag.map { NSEvent.ModifierFlags(rawValue: UInt($0.rawValue)) }
+        return flags.subtracting(own ?? []).union(chord)
+    }
+
     private func handleModifiers(
-        _ flags: NSEvent.ModifierFlags, isGlobeKey: Bool, functionDown: Bool,
-        hasOtherModifiers: Bool, at timestamp: TimeInterval,
+        _ flags: UInt, at timestamp: TimeInterval,
         action: HotKeyAction, hotKeys: HotKeyManager
     ) {
-        if !isGlobeKey { cancelGlobeCommit() }
-        if let gesture = globeDetector.handle(
-            isGlobeKey: isGlobeKey, functionDown: functionDown,
-            hasOtherModifiers: !flags.isEmpty, at: timestamp)
-        {
-            switch gesture {
-            case .single:
-                if globeCommit != nil {
-                    cancelGlobeCommit()
-                    commit(.globe, action: action, hotKeys: hotKeys)
-                } else {
-                    awaitingSecondGlobe = true
-                    globeCommit = Task { [weak self, weak hotKeys] in
-                        try? await Task.sleep(for: GlobeTapDetector.resolutionWindow)
-                        guard !Task.isCancelled, let self, let hotKeys else { return }
-                        self.globeCommit = nil
-                        self.awaitingSecondGlobe = false
-                        self.commit(.globe, action: action, hotKeys: hotKeys)
-                    }
-                }
-            case .double:
-                cancelGlobeCommit()
-                commit(.doubleGlobe, action: action, hotKeys: hotKeys)
+        let keys = ModifierKey.held(in: UInt64(flags), globeDown: heldGlobe)
+        heldModifier = keys.count == 1 ? keys.first : nil
+        guard let event = detector.handle(keys, at: timestamp) else { return }
+        switch event {
+        case .pressed(let key):
+            if key != awaitingSecondModifier { cancelModifierCommit() }
+        case .released(let key, let doubleTap, let held):
+            cancelModifierCommit()
+            if doubleTap || held {
+                commit(
+                    doubleTap ? key.doubleBinding : key.singleBinding,
+                    action: action, hotKeys: hotKeys)
+                return
             }
-            return
+            awaitingSecondModifier = key
+            modifierCommit = Task { [weak self, weak hotKeys] in
+                try? await Task.sleep(for: ModifierKeyDetector.resolutionWindow)
+                guard !Task.isCancelled, let self, let hotKeys else { return }
+                modifierCommit = nil
+                awaitingSecondModifier = nil
+                commit(key.singleBinding, action: action, hotKeys: hotKeys)
+            }
+        case .cancelled:
+            cancelModifierCommit()
         }
-        // `NSEvent.timestamp` is the same monotonic basis `ModifierTapMonitor` feeds in.
-        guard
-            let modifier = detector.handle(
-                .modifiers(Self.doubleTapModifiers(in: flags), hasOtherModifiers: hasOtherModifiers),
-                at: timestamp)
-        else { return }
-        commit(.doubleTap(modifier), action: action, hotKeys: hotKeys)
     }
 
-    private func cancelGlobeCommit() {
-        globeCommit?.cancel()
-        globeCommit = nil
-        awaitingSecondGlobe = false
-    }
-
-    private static func doubleTapModifiers(
-        in flags: NSEvent.ModifierFlags
-    )
-        -> Set<DoubleTapModifier>
-    {
-        var held: Set<DoubleTapModifier> = []
-        if flags.contains(.control) { held.insert(.control) }
-        if flags.contains(.option) { held.insert(.option) }
-        if flags.contains(.shift) { held.insert(.shift) }
-        if flags.contains(.command) { held.insert(.command) }
-        return held
+    private func cancelModifierCommit() {
+        modifierCommit?.cancel()
+        modifierCommit = nil
+        awaitingSecondModifier = nil
     }
 
     private func commit(_ binding: HotKeyBinding, action: HotKeyAction, hotKeys: HotKeyManager) {

@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The Layout row: an add button beside the dropdown naming the entry every field below edits.
 struct WindowLayoutEntryPicker: View {
     let draft: WindowLayoutDraft
     let displays: [WindowLayoutDisplay]
@@ -31,7 +30,7 @@ struct WindowLayoutEntryPicker: View {
         .popover(isPresented: $showingAppPicker, arrowEdge: .bottom) {
             AppPickerPopover { bundleID in
                 showingAppPicker = false
-                guard let bundleID, let display = targetDisplay else { return }
+                guard let display = targetDisplay else { return }
                 draft.addEntry(bundleID: bundleID, on: display)
             }
         }

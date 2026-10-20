@@ -1,6 +1,5 @@
 import AppKit
 
-/// Opens a resolved destination; every platform effect the feature has lives here.
 @MainActor
 enum QuicklinkLauncher {
     enum Failure: LocalizedError, Equatable {
@@ -12,13 +11,13 @@ enum QuicklinkLauncher {
         var errorDescription: String? {
             switch self {
             case .unresolvable(let link):
-                return "“\(link)” isn't a URL, file path, or deeplink."
+                return String(localized: "“\(link)” isn't a URL, file path, or deeplink.")
             case .missingFile(let path):
-                return "Nothing exists at \(path) any more."
+                return String(localized: "Nothing exists at \(path) any more.")
             case .missingApplication:
-                return "The app this quicklink opens with isn't installed any more."
+                return String(localized: "The app this quicklink opens with isn't installed any more.")
             case .openFailed(let target, let detail):
-                return "macOS could not open \(target).\n\n\(detail)"
+                return String(localized: "macOS could not open \(target).\n\n\(detail)")
             }
         }
 
@@ -29,10 +28,9 @@ enum QuicklinkLauncher {
         }
     }
 
-    /// Chromium and Firefox accept this, Safari ignores it, so passing it always is safe.
+    /// Browsers that don't support it ignore it, so passing it always is safe.
     private static let newWindowArgument = "--new-window"
 
-    /// `openWithBundleID` nil means the system default handler.
     static func open(
         _ link: String, openWithBundleID: String?, inNewWindow: Bool
     ) async throws(Failure) {

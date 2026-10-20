@@ -4,11 +4,12 @@
 export class EventEmitter {
   constructor() {
     this._events = new Map();
-    this._maxListeners = 10;
+    this._maxListeners = undefined;
   }
   _list(event) {
-    if (!this._events.has(event)) this._events.set(event, []);
-    return this._events.get(event);
+    const events = (this._events ??= new Map());
+    if (!events.has(event)) events.set(event, []);
+    return events.get(event);
   }
   on(event, listener) {
     this._list(event).push(listener);
@@ -24,13 +25,13 @@ export class EventEmitter {
   once(event, listener) {
     const wrapper = (...args) => {
       this.off(event, wrapper);
-      listener(...args);
+      listener.apply(this, args);
     };
     wrapper.listener = listener;
     return this.on(event, wrapper);
   }
   off(event, listener) {
-    const list = this._events.get(event);
+    const list = this._events?.get(event);
     if (!list) return this;
     const index = list.findIndex((entry) => entry === listener || entry.listener === listener);
     if (index >= 0) list.splice(index, 1);
@@ -40,31 +41,31 @@ export class EventEmitter {
     return this.off(event, listener);
   }
   removeAllListeners(event) {
-    if (event === undefined) this._events.clear();
-    else this._events.delete(event);
+    if (event === undefined) this._events?.clear();
+    else this._events?.delete(event);
     return this;
   }
   emit(event, ...args) {
-    const list = this._events.get(event);
+    const list = this._events?.get(event);
     if (!list?.length) return false;
     for (const listener of list.slice()) listener.apply(this, args);
     return true;
   }
   listenerCount(event) {
-    return this._events.get(event)?.length ?? 0;
+    return this._events?.get(event)?.length ?? 0;
   }
   listeners(event) {
-    return (this._events.get(event) ?? []).slice();
+    return (this._events?.get(event) ?? []).slice();
   }
   eventNames() {
-    return Array.from(this._events.keys());
+    return this._events ? Array.from(this._events.keys()) : [];
   }
   setMaxListeners(count) {
     this._maxListeners = count;
     return this;
   }
   getMaxListeners() {
-    return this._maxListeners;
+    return this._maxListeners ?? EventEmitter.defaultMaxListeners;
   }
 }
 

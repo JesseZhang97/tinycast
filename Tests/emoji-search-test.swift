@@ -1,4 +1,3 @@
-// Standalone test for emoji search, compiling the real index and frequency store.
 import Foundation
 
 @main
@@ -89,6 +88,14 @@ struct EmojiSearchTests {
         let english = EmojiIndex()
         await english.load(languages: ["en-US"], bundle: resources)
         expect(english.entries.map(\.keywords) == index.entries.map(\.keywords), "English reads no pack")
+
+        let chinese = EmojiIndex()
+        await chinese.load(languages: ["zh-Hans-CN", "en-US"], bundle: resources)
+        for (query, glyph) in [("猫", "🐱"), ("汉堡", "🍔"), ("cat", "🐱")] {
+            expect(
+                chinese.search(query, frequent: frequent).prefix(3).contains { $0.glyph == glyph },
+                "\(query) finds \(glyph) with Simplified Chinese keywords")
+        }
 
         let waving = index.search("hand waving", frequent: frequent)
         expect(waving.contains { $0.glyph == "👋" }, "multiword terms can match in either order")

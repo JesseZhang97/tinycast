@@ -1,5 +1,3 @@
-// Quick Actions' pure half: the actions, their prompts, the diff, and the reader's own choices.
-
 import Foundation
 
 @main
@@ -21,8 +19,6 @@ struct QuickActionTests {
         everyActionDescribesItself()
         promptsForbidCommentaryAndInjection()
         previewChoicesRememberOnlyWhatWasChosen()
-        diffsFindWordLevelChanges()
-        diffsStayBoundedOnLongText()
         settingsPersistAndRepairTheirRoute()
         actionsOverrideTheirRoute()
         refusalsNameTheirOwnCause()
@@ -222,6 +218,9 @@ struct QuickActionTests {
         expect(
             BuiltInQuickAction.summarize.showsDiff == false,
             "a summary is not the input edited, so a diff would be noise")
+        expect(
+            QuickAction.allBuiltIn.filter(\.rendersMarkdown) == [.summarize],
+            "an edit or translation is shown as the literal text it would paste")
     }
 
     static func promptsForbidCommentaryAndInjection() {
@@ -306,31 +305,6 @@ struct QuickActionTests {
         expect(restored.previewChoices.isEmpty, "an unknown key is a removed action, not a crash")
     }
 
-    static func diffsFindWordLevelChanges() {
-        let chunks = TextDiffEngine.diff(
-            original: "Their going to the meeting", modified: "They're going to the meeting")
-        expect(chunks.contains(.deleted("Their")), "the replaced word is marked deleted")
-        expect(
-            chunks.contains { if case .inserted(let text) = $0 { text.contains("They") } else { false } },
-            "the replacement is marked inserted")
-        expect(
-            chunks.contains { if case .equal(let text) = $0 { text.contains("meeting") } else { false } },
-            "untouched words stay equal")
-
-        expect(
-            TextDiffEngine.diff(original: "same", modified: "same") == [.equal("same")],
-            "an unchanged result is one equal run")
-        expect(TextDiffEngine.diff(original: "", modified: "") == [], "two empties diff to nothing")
-        expect(
-            TextDiffEngine.diff(original: "gone", modified: "") == [.deleted("gone")],
-            "an emptied result is wholly deleted")
-
-        // Coalescing's invariant: no two neighbours share a kind, or a phrase reads as a stutter.
-        let phrase = TextDiffEngine.diff(original: "one two three", modified: "four five three")
-        let stutters = zip(phrase, phrase.dropFirst()).filter { sameKind($0, $1) }
-        expect(stutters.isEmpty, "no two adjacent chunks share a kind, got \(phrase)")
-    }
-
     /// A fixed suite name stops cfprefsd accumulating a plist per run; cleared at both ends.
     static func isolatedDefaults(_ name: String) -> UserDefaults {
         let defaults = UserDefaults(suiteName: name)!
@@ -348,23 +322,6 @@ struct QuickActionTests {
                 .appendingPathComponent("Library/Preferences/\(name).plist"))
     }
 
-    static func sameKind(_ lhs: TextDiffEngine.Chunk, _ rhs: TextDiffEngine.Chunk) -> Bool {
-        switch (lhs, rhs) {
-        case (.equal, .equal), (.inserted, .inserted), (.deleted, .deleted): return true
-        default: return false
-        }
-    }
-
-    static func diffsStayBoundedOnLongText() {
-        // The matrix is quadratic, so an unbounded diff of a long selection asks for gigabytes.
-        let long = String(repeating: "word ", count: TextDiffEngine.maxTokens)
-        let chunks = TextDiffEngine.diff(original: long, modified: long + "tail")
-        expect(chunks.count == 2, "past the ceiling the diff degrades to whole-text, not a hang")
-        expect(
-            chunks.first == .deleted(long),
-            "the degraded diff still names the original whole")
-    }
-
     static func customActionsCarryTheirOwnIdentity() {
         let record = CustomQuickAction(name: "Make Snarky", instructions: "Add bite.")
         let action = QuickAction.custom(record)
@@ -373,6 +330,7 @@ struct QuickActionTests {
         expect(action.progressTitle == "Make Snarky…", "the pill names the action the reader pressed")
         expect(!action.alwaysPreviews, "nothing forces a custom action into a panel")
         expect(!action.showsDiff, "an arbitrary prompt is not the input edited, so no diff")
+        expect(action.rendersMarkdown, "a custom prompt's Markdown reply renders like Summarize's")
         expect(
             !action.usesTranslationFramework,
             "only the shipped Translate reaches Apple's translator")

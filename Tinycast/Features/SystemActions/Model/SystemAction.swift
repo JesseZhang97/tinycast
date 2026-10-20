@@ -13,6 +13,7 @@ struct SystemAction: Identifiable, Hashable, Sendable {
         case nextTrack = "next-track"
         case previousTrack = "previous-track"
         case toggleMute = "toggle-mute"
+        case toggleMicrophoneMute = "toggle-microphone-mute"
         case volumeUp = "volume-up"
         case volumeDown = "volume-down"
         case setVolume = "set-volume"
@@ -47,6 +48,7 @@ struct SystemAction: Identifiable, Hashable, Sendable {
 
     let id: ID
     let name: String
+    let englishName: String
     let sfSymbol: String
     let confirmation: Confirmation
 
@@ -56,8 +58,9 @@ struct SystemAction: Identifiable, Hashable, Sendable {
 
 enum SystemActionCatalog {
     static let all: [SystemAction] = SystemAction.ID.allCases.map { id in
-        SystemAction(
-            id: id, name: name(for: id), sfSymbol: symbol(for: id),
+        let name = name(for: id)
+        return SystemAction(
+            id: id, name: String(localized: name), englishName: name.key, sfSymbol: symbol(for: id),
             confirmation: confirmation(for: id))
     }
 
@@ -73,7 +76,7 @@ enum SystemActionCatalog {
         byID[id]!
     }
 
-    private static func name(for id: SystemAction.ID) -> String {
+    private static func name(for id: SystemAction.ID) -> LocalizedStringResource {
         switch id {
         case .lockScreen: return "Lock Screen"
         case .sleep: return "Sleep"
@@ -86,6 +89,7 @@ enum SystemActionCatalog {
         case .nextTrack: return "Next Track"
         case .previousTrack: return "Previous Track"
         case .toggleMute: return "Toggle Mute"
+        case .toggleMicrophoneMute: return "Toggle Microphone Mute"
         case .volumeUp: return "Turn Volume Up"
         case .volumeDown: return "Turn Volume Down"
         case .setVolume: return "Set Volume…"
@@ -122,6 +126,7 @@ enum SystemActionCatalog {
         case .nextTrack: return "forward.end"
         case .previousTrack: return "backward.end"
         case .toggleMute: return "speaker.slash"
+        case .toggleMicrophoneMute: return "mic.slash"
         case .volumeUp: return "speaker.plus"
         case .volumeDown: return "speaker.minus"
         case .setVolume, .volume0, .volume25, .volume50, .volume75, .volume100:
@@ -143,20 +148,22 @@ enum SystemActionCatalog {
     }
 
     private static let sessionEndingMessage =
-        "Applications with unsaved changes may ask you to save."
+        String(localized: "Applications with unsaved changes may ask you to save.")
 
     private static func confirmation(for id: SystemAction.ID) -> SystemAction.Confirmation {
         switch id {
         case .restart:
-            return .required(title: "Restart your Mac?", message: sessionEndingMessage)
+            return .required(
+                title: String(localized: "Restart your Mac?"), message: sessionEndingMessage)
         case .shutDown:
-            return .required(title: "Shut down your Mac?", message: sessionEndingMessage)
+            return .required(
+                title: String(localized: "Shut down your Mac?"), message: sessionEndingMessage)
         case .logOut:
-            return .required(title: "Log out now?", message: sessionEndingMessage)
+            return .required(title: String(localized: "Log out now?"), message: sessionEndingMessage)
         case .emptyTrash:
             return .followsFinder(
-                title: "Empty Trash?",
-                message: "The items in the Trash will be permanently deleted.")
+                title: String(localized: "Empty Trash?"),
+                message: String(localized: "The items in the Trash will be permanently deleted."))
         case .quitAllApps:
             return .computed
         default:

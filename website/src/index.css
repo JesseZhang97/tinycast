@@ -539,6 +539,17 @@
   .tc-key + .tc-key {
     margin-inline-start: 0.25em;
   }
+
+  /* Keyed to next-themes' .dark class: Tailwind's dark: variant follows the OS
+     instead, so it would disagree with the theme toggle. */
+  .dark .light-only,
+  html:not(.dark) .dark-only {
+    display: none;
+  }
+
+  .dark .invert-in-dark {
+    filter: invert(1);
+  }
 }
 
 /* Point Fumadocs' own palette at the Tinycast tokens, so the docs and the

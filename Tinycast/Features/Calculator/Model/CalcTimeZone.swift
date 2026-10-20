@@ -1,6 +1,5 @@
 import Foundation
 
-/// Clock time in another city. See docs/features/calculator.md.
 enum CalcTimeZone {
     static func evaluate(_ raw: String, now: Date, calendar: Calendar) -> CalcResult? {
         guard raw.count <= 128, raw.contains(where: \.isWhitespace) else { return nil }
@@ -431,7 +430,6 @@ enum CalcTimeZone {
         "America/Edmonton": ["calgary"]
     ]
 
-    /// Flattened once from the grouping above, which is the form that gets edited.
     private static let aliases: [String: String] = {
         var table: [String: String] = [:]
         table.reserveCapacity(aliasGroups.values.reduce(0) { $0 + $1.count })
@@ -442,7 +440,7 @@ enum CalcTimeZone {
     }()
 
     /// Not `localizedName`, which needs a `Locale` — banned in `Model/`.
-    private static func label(for zone: TimeZone) -> String {
+    static func label(for zone: TimeZone) -> String {
         if zone.identifier == "GMT" || zone.identifier == "UTC" { return "UTC" }
         guard let city = zone.identifier.split(separator: "/").last else { return zone.identifier }
         return city.replacingOccurrences(of: "_", with: " ")
@@ -467,12 +465,11 @@ enum CalcTimeZone {
             let to = dates.date(from: there.dateComponents([.era, .year, .month, .day], from: source.date)),
             let days = dates.dateComponents([.day], from: from, to: to).day
         else { return nil }
-        switch days {
-        case 0: return ""
-        case 1: return " (tomorrow)"
-        case -1: return " (yesterday)"
-        case ..<0: return " (\(-days) days ago)"
-        default: return " (in \(days) days)"
-        }
+        guard days != 0 else { return "" }
+        var relative = Date.AnchoredRelativeFormatStyle(
+            anchor: to, presentation: .named, locale: calendar.locale ?? Locale(identifier: "en_US"),
+            calendar: dates)
+        relative.allowedFields = [.day]
+        return " (\(from.formatted(relative)))"
     }
 }

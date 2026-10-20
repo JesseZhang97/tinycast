@@ -102,17 +102,23 @@ final class TextInjector {
 
     private let clipboardManager: ClipboardManager
     private let settings: AppSettings
-    private let deliveryQueue = DeliveryQueue()
+    private let deliveryQueue: DeliveryQueue
     private var automaticGeneration: AutomaticGeneration = 0
     private var activePasteboardLease: TemporaryPasteboardLease?
 
-    init(clipboardManager: ClipboardManager, settings: AppSettings) {
+    init(
+        clipboardManager: ClipboardManager, settings: AppSettings,
+        deliveryQueue: DeliveryQueue = DeliveryQueue()
+    ) {
         self.clipboardManager = clipboardManager
         self.settings = settings
+        self.deliveryQueue = deliveryQueue
     }
 
     /// A paste is still in flight, or we still hold the pasteboard it borrowed.
     var isDelivering: Bool { !deliveryQueue.isIdle || activePasteboardLease != nil }
+
+    func drain() async { await deliveryQueue.drain() }
 
     func prepareInteractiveExpansion(target: InjectionTarget?) -> Bool {
         if let editor = target?.ownEditor { return editor.isEditable }
@@ -231,9 +237,17 @@ final class TextInjector {
     func copySelection(
         from targetApp: NSRunningApplication?, pasteboard: any PasteboardAccess
     ) async -> String? {
-        clipboardManager.prepareForTinycastPasteboardMutation()
-        guard let original = PasteboardSnapshot(pasteboard: pasteboard) else { return nil }
-        defer { restore(original, to: pasteboard) }
+        // A second borrow would snapshot the first's copy and read its restore as a selection.
+        guard !isBorrowingCopy, let original = PasteboardSnapshot(pasteboard: pasteboard) else {
+            return nil
+        }
+        isBorrowingCopy = true
+        clipboardManager.pauseCapture()
+        defer {
+            restore(original, to: pasteboard)
+            clipboardManager.resumeCapture()
+            isBorrowingCopy = false
+        }
 
         Paster.postCommandC(toPid: targetApp?.processIdentifier)
         for _ in 0..<Self.copyPollAttempts {
@@ -255,6 +269,8 @@ final class TextInjector {
             changeCount: pasteboard.changeCount)
     }
 
+    private var isBorrowingCopy = false
+
     /// A copy lands well inside a second; past that the app was never going to answer.
     private static let copyPollAttempts = 40
     private static let copyPollInterval = Duration.milliseconds(25)
@@ -265,6 +281,7 @@ final class TextInjector {
         expectedKeyword: String?,
         keywordLength: Int,
         automaticGeneration: AutomaticGeneration?,
+        isValid: @escaping @MainActor () -> Bool = { true },
         onDelivered: @escaping @MainActor () -> Void = {},
         onFailed: @escaping @MainActor () -> Void = {}
     ) {
@@ -282,6 +299,7 @@ final class TextInjector {
         deliveryQueue.enqueue(isAutomatic: automaticGeneration != nil) { [weak self] in
             guard let self else { return }
             let completion = DeliveryCompletion(onDelivered: onDelivered, onFailed: onFailed)
+            guard isValid() else { completion.settle(); return }
             if let editor = target?.ownEditor {
                 await self.deliverInProcess(
                     injected,
@@ -289,6 +307,7 @@ final class TextInjector {
                     expectedKeyword: expectedKeyword,
                     keywordLength: keywordLength,
                     automaticGeneration: automaticGeneration,
+                    isValid: isValid,
                     completion: completion)
                 return
             }
@@ -309,6 +328,7 @@ final class TextInjector {
         expectedKeyword: String?,
         keywordLength: Int,
         automaticGeneration: AutomaticGeneration?,
+        isValid: @MainActor () -> Bool,
         completion: DeliveryCompletion
     ) async {
         defer { completion.settle() }
@@ -317,7 +337,8 @@ final class TextInjector {
             if keywordLength > 0 {
                 guard await wait(for: Self.convergenceInterval) else { return }
             }
-            guard inProcessDeliveryIsAllowed(automaticGeneration: automaticGeneration, editor: editor)
+            guard isValid(),
+                inProcessDeliveryIsAllowed(automaticGeneration: automaticGeneration, editor: editor)
             else { return }
             switch editor.keywordReplacementState(
                 expectedKeyword: expectedKeyword, keywordLength: keywordLength)

@@ -32,6 +32,8 @@ appear around it:
   [calculation](/docs/features/calculator), like `12% of 80` or `time in Tokyo`.
 - **A color card** when you paste a color like `#FF5733`.
 - **Open in Browser** at the top when you type a web address or a bare domain, like `github.com`.
+- **Files** below the results, when [File Search](/docs/features/file-search#in-the-launcher) has
+  **Show in launcher** on and you type three or more characters.
 - **"Use … with"** rows at the bottom, which send your text somewhere else. See
   [Fallbacks](/docs/launcher/fallbacks).
 
@@ -146,6 +148,8 @@ results. The palette stays open on the same search.
 
 It works for apps, System Settings panes, commands, Quick Actions, system actions, window commands
 and window layouts. To show an entry again, select its checkbox in the matching Settings pane.
+On a quicklink or custom command it's **Hide from Root Search**, and you turn **Show in root search**
+back on in its editor.
 
 Hiding only changes what search shows. The app stays installed, and its favorite, alias, learned
 ranking and shortcut keep working.

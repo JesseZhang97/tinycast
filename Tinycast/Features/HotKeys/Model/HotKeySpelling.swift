@@ -1,7 +1,6 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// A binding as a person types it into settings.json. See docs/features/settings-file.md.
 struct HotKeySpelling: Sendable {
     /// The Hyper chord in Carbon bits while a Hyper key is set, so it spells as `hyper` again.
     let hyperModifiers: Int?
@@ -29,6 +28,8 @@ struct HotKeySpelling: Sendable {
         switch binding {
         case .combo(let shortcut): text(for: shortcut)
         case .doubleTap(let modifier): "double-tap " + Self.name(of: modifier)
+        case .modifier(let key): Self.name(of: key)
+        case .doubleModifier(let key): "double-tap " + Self.name(of: key)
         case .globe: "globe"
         case .doubleGlobe: "double-tap globe"
         }
@@ -38,9 +39,11 @@ struct HotKeySpelling: Sendable {
     func binding(from text: String) -> HotKeyBinding? {
         let spelled = text.trimmingCharacters(in: .whitespaces).lowercased()
         if spelled == "globe" { return .globe }
+        if let key = Self.modifierKey(named: spelled) { return key.singleBinding }
         if spelled.hasPrefix(Self.doubleTapPrefix) {
             let modifier = String(spelled.dropFirst(Self.doubleTapPrefix.count))
             if modifier == "globe" { return .doubleGlobe }
+            if let key = Self.modifierKey(named: modifier) { return key.doubleBinding }
             return Self.doubleTapModifier(named: modifier).map(HotKeyBinding.doubleTap)
         }
         return shortcut(from: spelled).map(HotKeyBinding.combo)
@@ -157,6 +160,29 @@ struct HotKeySpelling: Sendable {
         case .option: "option"
         case .shift: "shift"
         case .command: "cmd"
+        }
+    }
+
+    private static func name(of key: ModifierKey) -> String {
+        guard let side = Self.side(of: key), let modifier = key.modifier else { return "globe" }
+        return side + " " + name(of: modifier)
+    }
+
+    private static func side(of key: ModifierKey) -> String? {
+        switch key {
+        case .leftControl, .leftOption, .leftShift, .leftCommand: "left"
+        case .rightControl, .rightOption, .rightShift, .rightCommand: "right"
+        case .globe: nil
+        }
+    }
+
+    private static func modifierKey(named name: String) -> ModifierKey? {
+        let parts = name.split(separator: " ")
+        guard parts.count == 2, let modifier = doubleTapModifier(named: String(parts[1])) else {
+            return nil
+        }
+        return ModifierKey.allCases.first {
+            side(of: $0) == String(parts[0]) && $0.modifier == modifier
         }
     }
 

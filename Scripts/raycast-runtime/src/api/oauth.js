@@ -1,177 +1,114 @@
-import { base64ToBytes, bytesToBase64, utf8Encode } from "../polyfills.js";
-import { hostCall, hostCallSync } from "../host.js";
+// Raycast's OAuth PKCE client (RFC 7636). Swift runs the browser sign-in and stores token sets.
+
+import { hostCall } from "../host.js";
+import { nodeModules } from "../node-shims.js";
 import { nestedEnums } from "./enums.generated.js";
 
-function generateRandomBytes(length) {
-  const base64 = hostCallSync("crypto", "random", [length]);
-  return base64ToBytes(base64);
-}
+const RedirectMethod = nestedEnums.OAuth.RedirectMethod;
+const clientIdMetadataDocument = "https://www.raycast.com/.well-known/oauth-client-metadata/raycast.json";
 
-function base64UrlEncode(bytes) {
-  return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+// The web redirect page forwards to `raycast://oauth`, so that scheme is what the sign-in waits for.
+const redirects = {
+  [RedirectMethod.Web]: { uri: "https://raycast.com/redirect?packageName=Extension", scheme: "raycast" },
+  [RedirectMethod.App]: { uri: "raycast://oauth?package_name=Extension", scheme: "raycast" },
+  [RedirectMethod.AppURI]: { uri: "com.raycast:/oauth?package_name=Extension", scheme: "com.raycast" },
+  [RedirectMethod.ClientIdMetadataDocument]: { uri: "com.raycast:/oauth", scheme: "com.raycast" },
+};
 
-function generateCodeVerifier() {
-  const bytes = generateRandomBytes(32);
-  return base64UrlEncode(bytes);
-}
+const expiryMarginSeconds = 10;
 
-function computeCodeChallenge(verifier) {
-  const verifierBytes = utf8Encode(verifier);
-  const hashBase64 = hostCallSync("crypto", "hash", ["sha256", bytesToBase64(verifierBytes), null]);
-  const hashBytes = base64ToBytes(hashBase64);
-  return base64UrlEncode(hashBytes);
-}
+const randomURLSafe = (size) => nodeModules.crypto.randomBytes(size).toString("base64url");
 
-function generateRandomString(length = 16) {
-  const bytes = generateRandomBytes(length);
-  return base64UrlEncode(bytes);
-}
-
-function generateState(client) {
-  // raycast.com/redirect expects state to be a JSON object (base64url-encoded)
-  // containing providerName and scheme ("tinycast") so it redirects to tinycast://oauth
-  const payload = {
-    token: generateRandomString(16),
-    providerName: client?.providerName || "",
-    providerId: client?.providerId || "",
-    scheme: "tinycast",
-  };
-  const json = JSON.stringify(payload);
-  const bytes = utf8Encode(json);
-  return base64UrlEncode(bytes);
-}
-
-export class TokenSet {
-  constructor(options = {}) {
-    this.accessToken = options.accessToken ?? options.access_token ?? "";
-    this.refreshToken = options.refreshToken ?? options.refresh_token;
-    this.idToken = options.idToken ?? options.id_token;
-    this.tokenType = options.tokenType ?? options.token_type ?? "Bearer";
-    this.scope = options.scope;
-    this.expiresIn = options.expiresIn ?? options.expires_in;
-    this.updatedAt = new Date(options.updatedAt ?? Date.now());
-  }
-
-  isExpired() {
-    if (this.expiresIn == null) return false;
-    const expiresAt = this.updatedAt.getTime() + (this.expiresIn - 30) * 1000;
-    return Date.now() >= expiresAt;
-  }
-}
-
-export class PKCEClient {
-  constructor(options = {}) {
-    this.redirectMethod = options.redirectMethod || nestedEnums.OAuth.RedirectMethod.Web;
-    this.providerName = options.providerName || "";
+class PKCEClient {
+  constructor(options) {
+    if (!redirects[options.redirectMethod]) throw new Error(`Unknown redirect method: ${options.redirectMethod}`);
+    this.redirectMethod = options.redirectMethod;
+    this.providerName = options.providerName;
     this.providerIcon = options.providerIcon;
-    this.providerId = options.providerId || "";
-    this.description = options.description || "";
+    this.providerId = options.providerId ?? options.providerName;
+    this.description = options.description;
   }
 
-  async authorizationRequest(options) {
-    if (!options || !options.endpoint || !options.clientId) {
-      throw new Error("authorizationRequest requires endpoint and clientId");
-    }
-
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = computeCodeChallenge(codeVerifier);
-    const codeChallengeMethod = "S256";
-    const state = options.state || generateState(this);
-
-    let redirectURI = options.extraParameters?.redirect_uri;
-    if (!redirectURI) {
-      if (this.redirectMethod === nestedEnums.OAuth.RedirectMethod.App) {
-        redirectURI = "raycast://oauth?package_name=Extension";
-      } else if (this.redirectMethod === nestedEnums.OAuth.RedirectMethod.AppURI) {
-        redirectURI = "com.raycast:/oauth?package_name=Extension";
-      } else {
-        redirectURI = "https://raycast.com/redirect?packageName=Extension";
-      }
-    }
-
-    const url = new URL(options.endpoint);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("client_id", options.clientId);
-    if (options.scope) {
-      url.searchParams.set("scope", options.scope);
-    }
-    url.searchParams.set("redirect_uri", redirectURI);
-    url.searchParams.set("code_challenge", codeChallenge);
-    url.searchParams.set("code_challenge_method", codeChallengeMethod);
-    url.searchParams.set("state", state);
-
-    if (options.extraParameters) {
-      for (const [key, value] of Object.entries(options.extraParameters)) {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value));
-        }
-      }
-    }
-
-    return {
-      endpoint: options.endpoint,
-      clientId: options.clientId,
-      scope: options.scope,
+  async authorizationRequest({ endpoint, clientId, scope, extraParameters }) {
+    const codeVerifier = randomURLSafe(32);
+    const request = {
+      clientId: clientId ?? (this.redirectMethod === RedirectMethod.ClientIdMetadataDocument ? clientIdMetadataDocument : undefined),
       codeVerifier,
-      codeChallenge,
-      codeChallengeMethod,
-      state,
-      redirectURI,
+      codeChallenge: nodeModules.crypto.createHash("sha256").update(codeVerifier).digest("base64url"),
+      state: randomURLSafe(16),
+      redirectURI: redirects[this.redirectMethod].uri,
+    };
+    const query = {
+      response_type: "code",
+      client_id: request.clientId,
+      redirect_uri: request.redirectURI,
+      scope,
+      state: request.state,
+      code_challenge: request.codeChallenge,
+      code_challenge_method: "S256",
+      ...extraParameters,
+    };
+    return {
+      ...request,
       toURL() {
+        const url = new URL(endpoint);
+        for (const [key, value] of Object.entries(query)) {
+          if (value !== undefined) url.searchParams.set(key, value);
+        }
         return url.toString();
       },
     };
   }
 
   async authorize(request) {
-    const url =
-      typeof request === "string"
-        ? request
-        : request?.toURL
-        ? request.toURL()
-        : request?.url || request?.endpoint;
-    if (!url) {
-      throw new Error("authorize requires a valid authorization URL");
+    const url = typeof request.toURL === "function" ? request.toURL() : request.url;
+    const redirect = await hostCall("oauth", "authorize", [url, redirects[this.redirectMethod].scheme]);
+    const params = new URL(redirect).searchParams;
+    const error = params.get("error");
+    if (error) throw new Error(params.get("error_description") ?? error);
+    // Raycast's web redirect page drops `state`, so only a returned one can be checked.
+    const state = params.get("state");
+    if (state !== null && request.state !== undefined && state !== request.state) {
+      throw new Error(`${this.providerName} sign-in returned a mismatched state.`);
     }
-    const state = typeof request === "object" ? request?.state : undefined;
+    const code = params.get("code");
+    if (!code) throw new Error(`${this.providerName} sign-in returned no authorization code.`);
+    return { authorizationCode: code };
+  }
 
-    let res = await hostCall("oauth", "authorize", [url, state]);
-
-    if (typeof res === "string") {
-      try {
-        res = JSON.parse(res);
-      } catch {}
-    }
-
-    return {
-      authorizationCode: res?.authorizationCode ?? res?.code ?? "",
-      accessToken: res?.accessToken,
-      state: res?.state,
+  async setTokens(options) {
+    const scope = options.scope;
+    const tokens = {
+      accessToken: options.accessToken ?? options.access_token,
+      refreshToken: options.refreshToken ?? options.refresh_token,
+      idToken: options.idToken ?? options.id_token,
+      expiresIn: options.expiresIn ?? options.expires_in,
+      scope: Array.isArray(scope) ? scope.join(" ") : scope,
+      updatedAt: new Date().toISOString(),
     };
+    await hostCall("oauth", "setTokens", [this.providerId, JSON.stringify(tokens)]);
   }
 
   async getTokens() {
-    let raw = await hostCall("oauth", "getTokens", [this.providerId]);
-    if (!raw) return undefined;
-    if (typeof raw === "string") {
-      try {
-        raw = JSON.parse(raw);
-      } catch {
-        return undefined;
-      }
-    }
-    // A token stored without a time can't be dated, so it counts as expired and gets refreshed.
-    return new TokenSet({ ...raw, updatedAt: raw.updatedAt ?? 0 });
+    const stored = await hostCall("oauth", "getTokens", [this.providerId]);
+    return stored ? tokenSet(JSON.parse(stored)) : undefined;
   }
 
-  async setTokens(tokens) {
-    const set = typeof tokens === "string" ? JSON.parse(tokens) : tokens;
-    const stamped = JSON.stringify({ ...set, updatedAt: new Date().toISOString() });
-    await hostCall("oauth", "setTokens", [this.providerId, stamped]);
-  }
-
-  async removeTokens() {
-    await hostCall("oauth", "removeTokens", [this.providerId]);
+  removeTokens() {
+    return hostCall("oauth", "setTokens", [this.providerId, null]);
   }
 }
+
+function tokenSet(stored) {
+  const updatedAt = new Date(stored.updatedAt);
+  return {
+    ...stored,
+    updatedAt,
+    isExpired() {
+      if (!Number.isFinite(stored.expiresIn)) return false;
+      return Date.now() >= updatedAt.getTime() + (stored.expiresIn - expiryMarginSeconds) * 1000;
+    },
+  };
+}
+
+export const OAuth = { PKCEClient, RedirectMethod, clientIdMetadataDocument };

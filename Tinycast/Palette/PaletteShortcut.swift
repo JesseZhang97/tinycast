@@ -34,10 +34,20 @@ enum PaletteShortcut: Equatable {
     case quit
     /// ⌃⌥⇧Q.
     case forceQuit
+    /// ⌃⇧M; ⌘M stays the app menu's Minimize.
+    case minimizeWindow
+    /// ⌃⇧H; ⌘H stays the app menu's Hide.
+    case hideApp
     /// ⌘R.
     case restart
     /// ⌘N, a new one of whatever the screen holds.
     case newItem
+    /// ⌘E, the row opened in its editor.
+    case edit
+    /// ⌘D.
+    case duplicate
+    /// ⌘F, for a screen whose ⌘↵ already does something else.
+    case showInFinder
     /// ⌥⌘,, the screen's own settings; ⌘, alone stays the app's.
     case settings
     /// ⌘J, Quick AI handing its conversation to the AI Chat window.
@@ -47,7 +57,7 @@ enum PaletteShortcut: Equatable {
     /// ⌘1…⌘0, matched by key code in the panel and handed over as a slot.
     case favoriteSlot(Int)
 
-    /// `matches` compares the pressed key through the active layout, so the letters stay positional.
+    /// `matches` compares through the active layout, so the letters stay positional.
     static func resolve(
         command: Bool, shift: Bool, option: Bool, control: Bool, isDeleteKey: Bool,
         matches: (Character) -> Bool
@@ -64,21 +74,26 @@ enum PaletteShortcut: Equatable {
         if command, !shift, matches("o") { return .openInApp }
         if command, !shift, matches("i") { return .showDetails }
         if control, matches("x") { return shift ? .deleteAll : .delete }
-        if command, shift, matches("f") { return .toggleFavorite }
+        if command, matches("f") { return shift ? .toggleFavorite : .showInFinder }
         if command, shift, matches("h") { return .hideFromSearch }
         if control, shift, matches("q") { return option ? .forceQuit : .quit }
+        if control, shift, matches("m") { return .minimizeWindow }
+        if control, shift, matches("h") { return .hideApp }
         if command, matches("r") { return .restart }
         if command, !shift, matches("n") { return .newItem }
+        if command, !shift, !option, !control, matches("e") { return .edit }
+        if command, !shift, matches("d") { return .duplicate }
         if command, option, matches(",") { return .settings }
         if command, matches("j") { return .continueInChat }
         return nil
     }
 
-    /// The compact bar shows no selection, so a chord aimed at a highlighted row waits for the list.
+    /// The compact bar shows no selection, so a chord aimed at a row waits for the list.
     var requiresExpanded: Bool {
         switch self {
         case .copyFile, .copyName, .copyPath, .copyText, .pasteFile, .quickLook, .openInApp,
-            .showDetails, .toggleFavorite, .hideFromSearch, .quit, .forceQuit, .restart:
+            .showDetails, .toggleFavorite, .hideFromSearch, .quit, .forceQuit, .minimizeWindow,
+            .hideApp, .restart, .edit, .duplicate, .showInFinder:
             true
         case .commandDelete, .delete, .deleteAll, .pin, .favoriteSlot, .continueInChat, .newItem,
             .settings, .copyCalculation:
@@ -89,9 +104,10 @@ enum PaletteShortcut: Equatable {
     var closesMenu: Bool {
         switch self {
         case .delete, .deleteAll, .copyFile, .copyName, .copyPath, .copyText, .copyCalculation,
-            .quickLook, .openInApp, .showDetails, .toggleFavorite, .hideFromSearch, .newItem, .settings:
+            .quickLook, .openInApp, .showDetails, .toggleFavorite, .hideFromSearch, .minimizeWindow,
+            .newItem, .settings, .edit, .duplicate, .showInFinder:
             true
-        case .commandDelete, .pasteFile, .quit, .forceQuit, .restart, .pin, .favoriteSlot,
+        case .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .favoriteSlot,
             .continueInChat:
             false
         }

@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Search Snippets: the enabled library filtered by the search field, previewed before it pastes.
 struct SnippetsScreen: PaletteScreen {
     let store: SnippetsStore
     let core: AppCore
@@ -20,7 +19,7 @@ struct SnippetsScreen: PaletteScreen {
         }
     }
 
-    let primaryActionTitle = "Paste Snippet"
+    let primaryActionTitle = String(localized: "Paste Snippet")
 
     private func record(at selection: Int) -> StoredSnippet? {
         let rows = rows
@@ -37,7 +36,28 @@ struct SnippetsScreen: PaletteScreen {
         core.snippetCoordinator.expandSnippetFromPalette(id: record.id)
     }
 
-    func secondary(at selection: Int) -> Bool { false }
+    /// ⌘↵ reveals the file, as it does on a snippet's launcher row.
+    func secondary(at selection: Int) -> Bool {
+        guard let record = record(at: selection) else { return false }
+        core.snippetCoordinator.showSnippetInFinder(record)
+        return true
+    }
+
+    func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
+        if shortcut == .newItem {
+            core.snippetCoordinator.editSnippet(nil)
+            return true
+        }
+        guard let record = record(at: selection) else { return false }
+        switch shortcut {
+        case .edit:
+            core.snippetCoordinator.editSnippet(record)
+        case .delete:
+            Task { await core.snippetCoordinator.deleteSnippet(id: record.id) }
+        default: return false
+        }
+        return true
+    }
 
     func body(selection: Int, scroll: ScrollIntent) -> AnyView {
         AnyView(content(selection: selection, scroll: scroll))
@@ -71,9 +91,9 @@ struct SnippetsScreen: PaletteScreen {
 
     /// An empty library and an over-narrow filter are different problems with different answers.
     private var emptyMessage: String {
-        if store.state == .loading { return "Loading snippets…" }
+        if store.state == .loading { return String(localized: "Loading snippets…") }
         return store.snippets.contains(where: { $0.snippet.isEnabled })
-            ? "No matching snippets" : "No snippets yet"
+            ? String(localized: "No matching snippets") : String(localized: "No snippets yet")
     }
 }
 
@@ -83,19 +103,33 @@ enum SnippetActionsMenu {
         PopoverMenuContent(
             header: record.snippet.name,
             items: [
-                PopoverMenuItem(title: "Paste Snippet", systemImage: "text.quote", shortcut: "↵") {
+                PopoverMenuItem(
+                    title: String(localized: "Paste Snippet"), systemImage: "text.quote", shortcut: "↵"
+                ) {
                     core.snippetCoordinator.expandSnippetFromPalette(id: record.id)
                 },
-                PopoverMenuItem(title: "Edit Snippet", systemImage: "pencil", startsSection: true) {
-                    core.paletteCoordinator.hidePalette(restoreFocus: false)
+                PopoverMenuItem(
+                    title: String(localized: "Edit Snippet"), systemImage: "pencil", startsSection: true,
+                    shortcut: "⌘E"
+                ) {
                     core.snippetCoordinator.editSnippet(record)
                 },
-                PopoverMenuItem(title: "Create Snippet", systemImage: "plus") {
-                    core.paletteCoordinator.hidePalette(restoreFocus: false)
+                PopoverMenuItem(
+                    title: String(localized: "Create Snippet"), systemImage: "plus", shortcut: "⌘N"
+                ) {
                     core.snippetCoordinator.editSnippet(nil)
                 },
-                PopoverMenuItem(title: "Show in Finder", systemImage: "folder", startsSection: true) {
+                PopoverMenuItem(
+                    title: String(localized: "Show in Finder"), systemImage: "folder", startsSection: true,
+                    shortcut: "⌘↵"
+                ) {
                     core.snippetCoordinator.showSnippetInFinder(record)
+                },
+                PopoverMenuItem(
+                    title: String(localized: "Delete Snippet"), systemImage: "trash", startsSection: true,
+                    shortcut: "⌃X", isDestructive: true
+                ) {
+                    Task { await core.snippetCoordinator.deleteSnippet(id: record.id) }
                 }
             ])
     }

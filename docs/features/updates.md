@@ -1,8 +1,8 @@
 # Updates
 
-Tinycast checks GitHub Releases once a day, offers the newest release for its own channel in a native
-window with its release notes, installs it and relaunches. There is no Sparkle and no appcast: the
-release feed the website already reads is the feed the app reads.
+By default, Tinycast checks GitHub Releases once a day and offers the newest release for its own
+channel in a native window with its release notes, installs it and relaunches. There is no Sparkle and
+no appcast: the release feed the website already reads is the feed the app reads.
 
 ## Invariants
 
@@ -36,6 +36,10 @@ release feed the website already reads is the feed the app reads.
   on the expanded copy before `replaceItemAt` runs, and the running app survives any failure untouched.
 - **Relaunching goes through `NSApp.terminate`, never `exit`.** That is what flushes a pending note
   draft and hands back the Hyper Key's HID-level caps remap, which outlives the process.
+  Relaunch schedules termination through the main run loop, outside any Swift task or dispatch
+  callback, so AppKit's nested termination loop can run the main-actor cleanup. The delegate returns
+  `terminateLater` and replies when cleanup finishes, preserving system logout and shutdown requests.
+  A reopen is scheduled once, only when termination is committed, and waits for the old process to exit.
 - **An automatic prompt defers to whatever the user is doing, and is never spent unshown.**
   `UpdateReadiness` withholds it while a snippet is expanding, an extension command is running, an
   uninstall is trashing, a shortcut is being recorded, a prompt or dialog is up, or the palette is
@@ -46,8 +50,11 @@ release feed the website already reads is the feed the app reads.
   have found the desktop idle. The window itself still appears at most once per version per launch:
   `announcedVersion` is set the moment an offer lands, so re-offering can never turn into nagging.
   Readiness is asked again at the click.
-- **Nothing about updates is persisted in `AppSettings`.** The feature owns one cache file, so no
-  `AppSettingsKey` and no `SettingsBackupCoverage` entry exist for it.
+- **Automatic checking is optional; manual checking stays available.** Settings → General →
+  Automatically check for updates defaults on. Turning it off stops the background task and any
+  in-flight automatic request, so neither a response nor a cached release can raise a new prompt.
+  The preference travels through settings backups and `general.automaticallyCheckForUpdates` in
+  settings.json; release metadata and skipped versions stay in the feature's own cache file.
 - **The window shows the changelog and nothing else.** CI writes install instructions below
   `<!-- tinycast:install -->`, and `ReleaseNotes.summary` — the single reader of that marker, called
   where the feed is parsed so the cache holds the cut text too — drops them. An app that installs its
@@ -94,6 +101,10 @@ It holds `lastCheckedAt`, the newest release seen, and the version the user dism
 measured from `lastCheckedAt`, so relaunching never re-asks GitHub; the interval is 24 h, dropping to
 2 h after a failed attempt, and the first check waits 30 s so it never lands in the login rush. The
 request carries a `User-Agent`, which the GitHub API rejects requests without.
+
+Disabling automatic checks takes effect immediately and survives relaunch. Turning them back on
+resumes the same schedule, with the startup delay and cached check time respected. Check for Updates
+always works independently of this preference, including while automatic checking is disabled.
 
 **Later means skip.** It records the version, so that release stops asking; a newer one still asks.
 Check for Updates ignores the record and always offers whatever is newer than what is running.

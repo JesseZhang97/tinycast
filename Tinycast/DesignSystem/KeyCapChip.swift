@@ -2,6 +2,35 @@ import SwiftUI
 
 /// A single keycap chip: `.outline` for hotkey hints on rows, `.filled` for footer shortcuts.
 struct KeyCapChip: View {
+    struct Label: View {
+        let text: String
+        var prefix: String?
+        var spacing: CGFloat = Theme.Spacing.xxs
+
+        var body: some View {
+            if let prefix {
+                HStack(spacing: spacing) {
+                    Text(prefix).textScale(.secondary)
+                    KeyCapChip.legend(text)
+                }
+            } else {
+                KeyCapChip.legend(text)
+            }
+        }
+    }
+
+    nonisolated static func inlineText(_ caps: [String], separator: String = "") -> Text {
+        caps.dropFirst().reduce(legend(caps.first ?? "")) { line, cap in
+            Text("\(line)\(separator)\(legend(cap))")
+        }
+    }
+
+    private nonisolated static func legend(_ text: String) -> Text {
+        symbolLegends[text].map { Text(Image(systemName: $0)) } ?? Text(text)
+    }
+
+    private nonisolated static let symbolLegends = ["🎤": "mic"]
+
     enum Style {
         case outline
         case filled
@@ -34,6 +63,7 @@ struct KeyCapChip: View {
     let text: String
     var style: Style = .filled
     var scale: Scale = .standard
+    var prefix: String?
     @Environment(\.metrics) private var metrics
 
     /// "↵" falls back to another face that seats high, so nudge it render-only.
@@ -41,7 +71,7 @@ struct KeyCapChip: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: metrics.radius.keyCap, style: .continuous)
-        Text(text)
+        Label(text: text, prefix: prefix, spacing: metrics.spacing.xxs)
             .font(scale.font(metrics))
             .foregroundStyle(Theme.Colors.textSecondary)
             .offset(y: text == "↵" ? Self.returnGlyphDrop : 0)

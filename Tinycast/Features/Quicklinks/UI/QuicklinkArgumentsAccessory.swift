@@ -15,10 +15,9 @@ enum QuicklinkArgumentsAccessory {
     ) -> PaletteHeaderAccessory? {
         guard let quicklink else { return nil }
         let metrics = core.settings.interfaceSize.metrics
-        let arguments = core.quicklinkCoordinator.promptedArguments(for: quicklink).map {
+        let arguments = SnippetTemplateEngine.declaredArguments(in: quicklink.link).map {
             InlineArgument(
-                id: $0.name, title: $0.name, options: $0.options,
-                isOptional: !QuicklinkCoordinator.requiresValue($0))
+                id: $0.name, title: $0.name, options: $0.options, isOptional: $0.isOptional)
         }
         guard !arguments.isEmpty else { return nil }
 
@@ -39,7 +38,7 @@ enum QuicklinkArgumentsAccessory {
                 return menu(for: argument, value: value(id))
             },
             placement: placement,
-            // Identity per row, so "which fields were left unanswered" starts clean on the next one.
+            // Identity per row, so which fields were left unanswered resets on the next one.
             view: AnyView(
                 InlineArgumentFields(
                     arguments: arguments, symbol: symbol, value: value, focused: focus,
@@ -49,10 +48,9 @@ enum QuicklinkArgumentsAccessory {
         )
     }
 
-    /// The typed values for one quicklink, stripped of blanks — what the open funnel is handed.
-    static func values(for quicklink: Quicklink, core: AppCore, vm: PaletteState) -> [String: String] {
+    static func values(for quicklink: Quicklink, vm: PaletteState) -> [String: String] {
         var values: [String: String] = [:]
-        for argument in core.quicklinkCoordinator.promptedArguments(for: quicklink) {
+        for argument in SnippetTemplateEngine.declaredArguments(in: quicklink.link) {
             let typed =
                 vm.commandArguments[
                     PaletteState.argumentKey(quicklink.entryID, argument.name)] ?? ""

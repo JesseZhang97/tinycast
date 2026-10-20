@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The support surface: the ask, the one button, and the reminder switch.
 struct SupportWindowView: View {
     /// Held directly, not injected: it publishes nothing, so `@Observable` would buy nothing.
     let support: SupportCoordinator
@@ -65,7 +64,9 @@ struct SupportWindowView: View {
 
     private var action: some View {
         VStack(spacing: Theme.Spacing.lg) {
-            SupportActionButton(title: "Support \(Bundle.main.appDisplayName)", icon: "heart") {
+            SupportActionButton(
+                title: String(localized: "Support \(Bundle.main.appDisplayName)"), icon: "heart"
+            ) {
                 support.openCheckout()
             }
             Text("Secure checkout on Polar.")
@@ -83,12 +84,10 @@ struct SupportWindowView: View {
             .foregroundStyle(Theme.Colors.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(
-                "About once a month. Turn this off and"
-                    + " \(Bundle.main.appDisplayName) won't ask again.")
+                "About once a month. Turn this off and \(Bundle.main.appDisplayName) won't ask again.")
     }
 }
 
-/// The window's one call to action. Local to Support, like every other view this feature owns.
 private struct SupportActionButton: View {
     let title: String
     let icon: String

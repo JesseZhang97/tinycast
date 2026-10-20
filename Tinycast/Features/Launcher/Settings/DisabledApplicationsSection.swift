@@ -17,14 +17,13 @@ struct DisabledApplicationsList: View {
         Button("Add Application…") { picking = true }
             .popover(isPresented: $picking, arrowEdge: .bottom) {
                 AppPickerPopover(excluded: Set(bundleIDs)) { bundleID in
-                    if let bundleID { bundleIDs.append(bundleID) }
+                    bundleIDs.append(bundleID)
                     picking = false
                 }
             }
     }
 }
 
-/// A whole section of them, for a pane whose exclusions are a subject of their own.
 struct DisabledApplicationsSection: View {
     @Binding var bundleIDs: [String]
     let anchor: SettingsAnchor

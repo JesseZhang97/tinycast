@@ -1,13 +1,16 @@
 import CoreGraphics
 import Foundation
 
-/// Window management's lists as settings.json spells them, each record carrying its shortcut.
+/// Window management's lists as settings.json spells them, each record with its shortcut and alias.
 enum WindowManagementFileFormat {
-    /// A list read back from the file: the records it could use, and what it had to skip.
+    /// Each command's text, nil for `null`; a wrong-typed one has no entry and keeps its own.
+    typealias CommandTexts = (texts: [WindowCommand.ID: String?], problems: [String])
+
     struct Decoded<Record> {
         var records: [Record] = []
-        /// Chord text by record, left for the caller to parse against this Mac's keyboard.
-        var shortcuts: [UUID: String] = [:]
+        /// By record, nil for `null`; a missing or wrong-typed field has none and keeps its value.
+        var shortcuts: [UUID: String?] = [:]
+        var aliases: [UUID: String?] = [:]
         var problems: [String] = []
     }
 
@@ -22,29 +25,48 @@ enum WindowManagementFileFormat {
     }
 
     /// A command the object leaves out is unbound, the same as one set to `null`.
-    static func commandShortcuts(
-        from json: SettingsFileJSON
-    ) -> (shortcuts: [WindowCommand.ID: String], problems: [String])? {
+    static func commandShortcuts(from json: SettingsFileJSON) -> CommandTexts? {
+        commandTexts(from: json) { String(localized: "“\($0)” needs a shortcut in quotes, or null") }
+    }
+
+    // MARK: - Command aliases
+
+    static func json(commandAliases: [WindowCommand.ID: String]) -> SettingsFileJSON {
+        .object(
+            WindowCommand.ID.allCases.compactMap { id in
+                commandAliases[id].map { SettingsFileJSON.Member(key: id.rawValue, value: .string($0)) }
+            })
+    }
+
+    static func commandAliases(from json: SettingsFileJSON) -> CommandTexts? {
+        commandTexts(from: json) { String(localized: "“\($0)” needs an alias in quotes, or null") }
+    }
+
+    private static func commandTexts(
+        from json: SettingsFileJSON, wrongType: (String) -> String
+    ) -> CommandTexts? {
         guard let members = json.members else { return nil }
-        var shortcuts: [WindowCommand.ID: String] = [:]
+        var texts = Dictionary(uniqueKeysWithValues: WindowCommand.ID.allCases.map { ($0, String?.none) })
         var problems: [String] = []
         for member in members {
             guard let id = WindowCommand.ID(rawValue: member.key) else {
-                problems.append("no command is called “\(member.key)”")
+                problems.append(String(localized: "no command is called “\(member.key)”"))
                 continue
             }
             switch member.value {
             case .null: continue
-            case .string(let text): shortcuts[id] = text
-            default: problems.append("“\(member.key)” needs a shortcut in quotes, or null")
+            case .string(let text): texts[id] = text
+            default:
+                texts.removeValue(forKey: id)
+                problems.append(wrongType(member.key))
             }
         }
-        return (shortcuts, problems)
+        return (texts, problems)
     }
 
     // MARK: - Custom sizes
 
-    static func json(_ size: CustomWindowSize, shortcut: String?) -> SettingsFileJSON {
+    static func json(_ size: CustomWindowSize, shortcut: String?, alias: String?) -> SettingsFileJSON {
         .object([
             "id": .string(size.id.uuidString.lowercased()),
             "name": .string(size.name),
@@ -52,7 +74,8 @@ enum WindowManagementFileFormat {
             "height": .string(spelled(size.height)),
             "position": .string(size.anchor.rawValue),
             "offset": offset(x: Double(size.offset.x), y: Double(size.offset.y)),
-            "shortcut": text(shortcut)
+            "shortcut": text(shortcut),
+            "alias": text(alias)
         ])
     }
 
@@ -61,12 +84,17 @@ enum WindowManagementFileFormat {
         var decoded = Decoded<CustomWindowSize>()
         for (index, item) in items.enumerated() {
             guard let name = item["name"]?.string else {
-                decoded.problems.append("custom size \(index + 1) needs a “name”")
+                decoded.problems.append(String(localized: "custom size \(index + 1) needs a “name”"))
                 continue
             }
-            let label = "custom size “\(name)”"
+            let label = String(localized: "custom size “\(name)”")
             guard let width = dimension(item["width"]), let height = dimension(item["height"]) else {
-                decoded.problems.append("\(label) needs a “width” and “height”, as \"60%\" or \"900pt\"")
+                decoded.problems.append(
+                    String(
+                        localized: """
+                            custom size “\(name)” needs a “width” and “height”, \
+                            as "60%" or "900pt"
+                            """))
                 continue
             }
             let id = identity(of: item, kind: "custom-size", name: name, label: label, into: &decoded)
@@ -78,20 +106,21 @@ enum WindowManagementFileFormat {
                     offset: CustomWindowSize.Offset(
                         x: Int(exactly: offset.x.rounded()) ?? 0,
                         y: Int(exactly: offset.y.rounded()) ?? 0)))
-            shortcut(of: item, id: id, label: label, into: &decoded)
+            texts(of: item, id: id, label: label, into: &decoded)
         }
         return decoded
     }
 
     // MARK: - Layouts
 
-    static func json(_ layout: WindowLayout, shortcut: String?) -> SettingsFileJSON {
+    static func json(_ layout: WindowLayout, shortcut: String?, alias: String?) -> SettingsFileJSON {
         .object([
             "id": .string(layout.id.uuidString.lowercased()),
             "name": .string(layout.name),
             "icon": text(layout.iconSymbol),
             "usesGap": .bool(layout.usesPreferredGap),
             "shortcut": text(shortcut),
+            "alias": text(alias),
             "apps": .array(
                 layout.entries.map { json($0, frontmost: $0.id == layout.frontmostEntryID) })
         ])
@@ -117,10 +146,10 @@ enum WindowManagementFileFormat {
         var decoded = Decoded<WindowLayout>()
         for (index, item) in items.enumerated() {
             guard let name = item["name"]?.string else {
-                decoded.problems.append("layout \(index + 1) needs a “name”")
+                decoded.problems.append(String(localized: "layout \(index + 1) needs a “name”"))
                 continue
             }
-            let label = "layout “\(name)”"
+            let label = String(localized: "layout “\(name)”")
             let id = identity(of: item, kind: "layout", name: name, label: label, into: &decoded)
             var frontmostEntryID: UUID?
             var entries: [WindowLayoutEntry] = []
@@ -128,8 +157,10 @@ enum WindowManagementFileFormat {
                 guard let bundleID = app["app"]?.string, let display = app["display"],
                     let displayID = display["id"]?.string
                 else {
-                    decoded.problems.append(
-                        "\(label): app \(position + 1) needs an “app” and a “display.id”")
+                    let number = position + 1
+                    let problem = String(
+                        localized: "\(label): app \(number) needs an “app” and a “display.id”")
+                    decoded.problems.append(problem)
                     continue
                 }
                 // Derived, not stored, so reading the same file twice yields the same layout.
@@ -139,7 +170,7 @@ enum WindowManagementFileFormat {
                     WindowLayoutEntry(
                         id: entryID, bundleID: bundleID, argument: app["open"]?.string,
                         display: WindowLayoutDisplay(
-                            uuid: displayID, name: display["name"]?.string ?? "Display"),
+                            uuid: displayID, name: display["name"]?.string ?? String(localized: "Display")),
                         widthFraction: CGFloat(app["width"]?.number ?? 1),
                         heightFraction: CGFloat(app["height"]?.number ?? 1),
                         anchor: anchor(app["position"], label: label, into: &decoded),
@@ -153,14 +184,14 @@ enum WindowManagementFileFormat {
                     id: id, name: name, iconSymbol: item["icon"]?.string,
                     usesPreferredGap: item["usesGap"]?.bool ?? true, entries: entries,
                     frontmostEntryID: frontmostEntryID))
-            shortcut(of: item, id: id, label: label, into: &decoded)
+            texts(of: item, id: id, label: label, into: &decoded)
         }
         return decoded
     }
 
     // MARK: - Rooms
 
-    static func json(_ room: Room, shortcut: String?) -> SettingsFileJSON {
+    static func json(_ room: Room, shortcut: String?, alias: String?) -> SettingsFileJSON {
         let layoutsByDisplay = room.layoutsByDisplay.sorted { $0.key < $1.key }.map {
             SettingsFileJSON.Member(key: $0.key, value: .string($0.value.rawValue))
         }
@@ -170,6 +201,7 @@ enum WindowManagementFileFormat {
             "layout": .string(room.layout.rawValue),
             "layoutsByDisplay": .object(layoutsByDisplay),
             "shortcut": text(shortcut),
+            "alias": text(alias),
             "windows": .array(room.windows.map(json))
         ])
     }
@@ -201,15 +233,16 @@ enum WindowManagementFileFormat {
         var decoded = Decoded<Room>()
         for (index, item) in items.enumerated() {
             guard let name = item["name"]?.string else {
-                decoded.problems.append("room \(index + 1) needs a “name”")
+                decoded.problems.append(String(localized: "room \(index + 1) needs a “name”"))
                 continue
             }
-            let label = "room “\(name)”"
+            let label = String(localized: "room “\(name)”")
             let id = identity(of: item, kind: "room", name: name, label: label, into: &decoded)
             var windows: [RoomWindow] = []
             for (position, window) in (item["windows"]?.items ?? []).enumerated() {
                 guard let bundleID = window["app"]?.string else {
-                    decoded.problems.append("\(label): window \(position + 1) needs an “app”")
+                    decoded.problems.append(
+                        String(localized: "\(label): window \(position + 1) needs an “app”"))
                     continue
                 }
                 windows.append(
@@ -223,7 +256,8 @@ enum WindowManagementFileFormat {
                 if let kind = RoomLayoutKind(rawValue: spelled) {
                     layout = kind
                 } else {
-                    decoded.problems.append("\(label): no layout is called “\(spelled)”")
+                    decoded.problems.append(
+                        String(localized: "\(label): no layout is called “\(spelled)”"))
                 }
             }
             var layoutsByDisplay: [String: RoomLayoutKind] = [:]
@@ -237,7 +271,7 @@ enum WindowManagementFileFormat {
                 Room(
                     id: id, name: name, windows: windows, layout: layout,
                     layoutsByDisplay: layoutsByDisplay))
-            shortcut(of: item, id: id, label: label, into: &decoded)
+            texts(of: item, id: id, label: label, into: &decoded)
         }
         return decoded
     }
@@ -279,7 +313,8 @@ enum WindowManagementFileFormat {
         let derived = SettingsFileIdentity.uuid(for: kind + ":" + name.lowercased())
         guard let spelled = item["id"] else { return derived }
         guard let id = spelled.string.flatMap(UUID.init(uuidString:)) else {
-            decoded.problems.append("\(label): “id” isn't a UUID, so one was derived from the name")
+            decoded.problems.append(
+                String(localized: "\(label): “id” isn't a UUID, so one was derived from the name"))
             return derived
         }
         return id
@@ -290,7 +325,7 @@ enum WindowManagementFileFormat {
     ) -> WindowLayoutAnchor {
         guard let spelled = json?.string else { return .center }
         guard let anchor = WindowLayoutAnchor(rawValue: spelled) else {
-            decoded.problems.append("\(label): no position is called “\(spelled)”")
+            decoded.problems.append(String(localized: "\(label): no position is called “\(spelled)”"))
             return .center
         }
         return anchor
@@ -301,19 +336,27 @@ enum WindowManagementFileFormat {
     ) -> (x: Double, y: Double) {
         guard let json else { return (0, 0) }
         guard let x = json["x"]?.number, let y = json["y"]?.number else {
-            decoded.problems.append("\(label): “offset” needs numbers for “x” and “y”")
+            decoded.problems.append(
+                String(localized: "\(label): “offset” needs numbers for “x” and “y”"))
             return (0, 0)
         }
         return (x, y)
     }
 
-    private static func shortcut<Record>(
+    private static func texts<Record>(
         of item: SettingsFileJSON, id: UUID, label: String, into decoded: inout Decoded<Record>
     ) {
-        switch item["shortcut"] {
-        case nil, .null?: return
-        case .string(let text)?: decoded.shortcuts[id] = text
-        default: decoded.problems.append("\(label): “shortcut” needs quotes, or null")
+        let fields: KeyValuePairs<String, WritableKeyPath<Decoded<Record>, [UUID: String?]>> = [
+            "shortcut": \.shortcuts, "alias": \.aliases
+        ]
+        for (field, texts) in fields {
+            switch item[field] {
+            case nil: continue
+            case .null?: decoded[keyPath: texts].updateValue(nil, forKey: id)
+            case .string(let text)?: decoded[keyPath: texts][id] = text
+            default:
+                decoded.problems.append(String(localized: "\(label): “\(field)” needs quotes, or null"))
+            }
         }
     }
 

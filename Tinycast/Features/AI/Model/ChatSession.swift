@@ -21,7 +21,7 @@ struct ChatSession: Equatable, Sendable {
 
     var title: String {
         guard let text = messages.first(where: { $0.role == .user })?.text else {
-            return "New Chat"
+            return String(localized: "New Chat")
         }
         return Self.summary(text, limit: 72)
     }
@@ -128,14 +128,18 @@ struct ChatSession: Equatable, Sendable {
         return true
     }
 
-    /// What Copy Chat puts on the pasteboard: each turn under its speaker, attachments by name.
     func markdownTranscript(title: String) -> String {
         var parts = ["# \(title)"]
         for message in messages
         where !message.text.isEmpty || !message.documents.isEmpty || !message.images.isEmpty {
-            var turn = message.role == .user ? "**You**" : "**AI**"
-            let names = message.documents.map(\.name) + message.images.map { _ in "Image" }
-            if !names.isEmpty { turn += " _(attached: \(names.joined(separator: ", ")))_" }
+            let speaker = message.role == .user ? String(localized: "You") : String(localized: "AI")
+            var turn = "**\(speaker)**"
+            let names =
+                message.documents.map(\.name) + message.images.map { _ in String(localized: "Image") }
+            if !names.isEmpty {
+                let attached = String(localized: "attached: \(names.joined(separator: ", "))")
+                turn += " _(\(attached))_"
+            }
             // The choices fence drew buttons; in a pasted transcript it is only markup.
             let text = message.role == .assistant ? ChatChoices.split(message.text).text : message.text
             parts.append(turn + "\n\n" + text)
@@ -162,4 +166,17 @@ struct ChatConversation: Identifiable, Equatable, Sendable {
     var generatedTitle: String?
 
     var displayTitle: String { customTitle ?? generatedTitle ?? title }
+}
+
+extension [ChatConversation] {
+    /// The window sidebar's order; each part keeps the newest-first order the store holds.
+    var pinnedFirst: [ChatConversation] { filter(\.isPinned) + filter { !$0.isPinned } }
+
+    /// Wraps at either end; a chat with no row yet enters from the top, or the bottom going back.
+    func adjacent(to id: UUID, step: Int) -> ChatConversation? {
+        guard !isEmpty else { return nil }
+        guard let index = firstIndex(where: { $0.id == id }) else { return step > 0 ? first : last }
+        let neighbor = self[((index + step) % count + count) % count]
+        return neighbor.id == id ? nil : neighbor
+    }
 }

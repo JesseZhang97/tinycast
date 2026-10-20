@@ -1,8 +1,11 @@
 import AppKit
+import Observation
 
 /// Owns custom commands: the library, the one run funnel with its gates, and a deletion's cleanup.
 @MainActor
+@Observable
 final class CustomCommandCoordinator {
+    private(set) var editor: CustomCommandEditorSession?
     private let store: CustomCommandStore
     private let settings: AppSettings
     private let appIndex: AppIndex
@@ -16,7 +19,7 @@ final class CustomCommandCoordinator {
     /// Dialog and message-HUD presentation only — never for state this type owns.
     private unowned let core: AppCore
     /// Built on first use; the window inside it waits for a run that actually shows output.
-    private lazy var outputPresenter = CommandOutputPresenter(
+    @ObservationIgnored private lazy var outputPresenter = CommandOutputPresenter(
         activation: activationPolicy,
         rerun: { [unowned self] in self.rerunOutput(id: $0) },
         stop: { [unowned self] in self.stopOutputRun(id: $0) },
@@ -58,11 +61,82 @@ final class CustomCommandCoordinator {
     // MARK: - Feature presence
 
     func applyCustomCommandsPresence() {
+        if !settings.customCommandsEnabled {
+            if core.palette.mode == .customCommandEditor { cancelCustomCommandEditing() }
+            if core.palette.mode == .customCommands {
+                core.palette.prepare(mode: .launcher)
+            }
+        }
         let visible = settings.customCommandsEnabled && settings.customCommandsShowInLauncher
         appIndex.setCustomCommands(visible ? store.commands : [])
+        let commands = Set(SettingsTab.commands.ownedCommands)
+        appIndex.setCommandsVisible(commands, settings.customCommandsEnabled)
+        appIndex.setCommandsListed(commands, settings.customCommandsShowInLauncher)
     }
 
     // MARK: - Library
+
+    func showCustomCommands() {
+        guard settings.customCommandsEnabled else { return }
+        paletteCoordinator.togglePalette(mode: .customCommands)
+    }
+
+    func editCustomCommand(_ command: CustomCommand?) {
+        guard settings.customCommandsEnabled else { return }
+        editor = CustomCommandEditorSession(command: command)
+        paletteCoordinator.showPalette(mode: .customCommandEditor)
+    }
+
+    func saveCustomCommand() {
+        guard settings.customCommandsEnabled, let editor, editor.canSave else { return }
+        do {
+            var draft = editor.draft()
+            if editor.original == nil {
+                try addCustomCommand(draft)
+            } else {
+                guard let current = store.command(id: editor.id) else {
+                    editor.errorMessage = String(
+                        localized: "This command was deleted. Copy your changes before closing.")
+                    return
+                }
+                draft.isEnabled = current.isEnabled
+                try updateCustomCommand(draft)
+            }
+            cancelCustomCommandEditing()
+        } catch {
+            editor.errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelCustomCommandEditing() {
+        guard core.palette.mode == .customCommandEditor else { return }
+        if !core.palette.pop(preservingSelection: true) {
+            paletteCoordinator.hidePalette()
+            core.palette.prepare(mode: .launcher)
+        }
+        editor = nil
+    }
+
+    func editorDidClose(_ editor: CustomCommandEditorSession) {
+        if self.editor === editor { self.editor = nil }
+    }
+
+    func chooseWorkingDirectory() {
+        guard let editor else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Choose the folder this command runs in.")
+        if !editor.workingDirectory.isEmpty {
+            panel.directoryURL = URL(
+                fileURLWithPath: (editor.workingDirectory as NSString).expandingTildeInPath)
+        }
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url, self.editor === editor else { return }
+        editor.workingDirectory = (url.path as NSString).abbreviatingWithTildeInPath
+    }
 
     @discardableResult
     func addCustomCommand(_ draft: CustomCommand) throws -> CustomCommand {
@@ -78,8 +152,19 @@ final class CustomCommandCoordinator {
         store.setEnabled(enabled, id: id)
     }
 
-    func deleteCustomCommand(id: UUID) {
+    func setCustomCommandShowsInRootSearch(_ shows: Bool, id: UUID) {
+        store.setShowsInRootSearch(shows, id: id)
+    }
+
+    func deleteCustomCommand(id: UUID) async {
         guard let command = store.command(id: id) else { return }
+        guard
+            await core.confirm(
+                title: String(localized: "Delete “\(command.name)”?"),
+                message: String(localized: "Its shortcut, favorite slot and learned ranking go with it."),
+                symbol: command.iconSymbol ?? CustomCommand.sfSymbol,
+                confirmTitle: String(localized: "Delete"))
+        else { return }
         removeCustomCommandReferences(ids: [id], entryIDs: [command.entryID])
         store.remove(id: id)
     }
@@ -105,8 +190,8 @@ final class CustomCommandCoordinator {
         }.value
         guard !drafts.isEmpty else {
             await core.showNotice(
-                title: "Nothing to Import",
-                message: "No Raycast script commands were found in this folder.",
+                title: String(localized: "Nothing to Import"),
+                message: String(localized: "No Raycast script commands were found in this folder."),
                 symbol: CustomCommand.sfSymbol, tone: .neutral)
             return
         }
@@ -115,13 +200,13 @@ final class CustomCommandCoordinator {
         // Everything offered was already here, so say so rather than "0 imported".
         guard added > 0 else {
             await core.showNotice(
-                title: "Nothing to Import",
-                message: "Every script in this folder is already in your library.",
+                title: String(localized: "Nothing to Import"),
+                message: String(localized: "Every script in this folder is already in your library."),
                 symbol: CustomCommand.sfSymbol, tone: .neutral)
             return
         }
         await core.showNotice(
-            title: "Scripts Imported",
+            title: String(localized: "Scripts Imported"),
             message: importSummary(added: added, offered: drafts.count),
             symbol: CustomCommand.sfSymbol, tone: .success)
     }
@@ -132,8 +217,8 @@ final class CustomCommandCoordinator {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Import"
-        panel.message = "Choose a folder of Raycast script commands."
+        panel.prompt = String(localized: "Import")
+        panel.message = String(localized: "Choose a folder of Raycast script commands.")
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK else { return nil }
         return panel.url
@@ -142,17 +227,22 @@ final class CustomCommandCoordinator {
     /// Scripts run arbitrary code, so this warns the way a backup of custom commands does.
     private func confirmScriptImport(count: Int) async -> Bool {
         await core.confirm(
-            title: count == 1 ? "Import 1 script?" : "Import \(count) scripts?",
-            message:
-                "Imported commands run these files with your user account. Only import scripts you "
-                + "trust.",
-            symbol: CustomCommand.sfSymbol, confirmTitle: "Import", confirmRole: .standard)
+            title: String(localized: "Import \(count) scripts?"),
+            message: String(
+                localized: """
+                    Imported commands run these files with your user account. Only import scripts you \
+                    trust.
+                    """),
+            symbol: CustomCommand.sfSymbol, confirmTitle: String(localized: "Import"),
+            confirmRole: .standard)
     }
 
     private func importSummary(added: Int, offered: Int) -> String {
-        let imported = added == 1 ? "Imported 1 command." : "Imported \(added) commands."
-        guard offered > added else { return imported }
-        return imported + " Skipped \(offered - added) already in your library."
+        guard offered > added else { return String(localized: "Imported \(added) commands.") }
+        return String(
+            localized: """
+                Imported \(added) commands. Skipped \(offered - added) already in your library.
+                """)
     }
 
     // MARK: - Running
@@ -203,8 +293,9 @@ final class CustomCommandCoordinator {
                     // Neutral, not destructive: their own command just wants a second tap.
                     await core.confirm(
                         title: command.name,
-                        message: "Are you sure you want to run this command?\n\n\(command.command)",
-                        symbol: command.symbol, confirmTitle: "Run",
+                        message: String(
+                            localized: "Are you sure you want to run this command?\n\n\(command.command)"),
+                        symbol: command.symbol, confirmTitle: String(localized: "Run"),
                         tone: .neutral, confirmRole: .standard)
                 else { return }
             }
@@ -273,26 +364,28 @@ final class CustomCommandCoordinator {
         guard !result.succeeded else {
             // What the command said beats a bare "it ran"; on finish, so a slow one reports late.
             if command.showsConfirmation {
-                core.showMessage(result.lastOutputLine ?? "Ran \(command.name)")
+                core.showMessage(result.lastOutputLine ?? String(localized: "Ran \(command.name)"))
             }
             return
         }
         let hint = shellEnvironmentHint(command: command, result: result)
         guard
             await core.reportFailure(
-                title: "“\(command.name)” Failed",
+                title: String(localized: "“\(command.name)” Failed"),
                 message: failureMessage(command: command, result: result),
-                symbol: command.symbol, recovery: hint == nil ? nil : "Open Settings…")
+                symbol: command.symbol, recovery: hint == nil ? nil : String(localized: "Open Settings…"))
         else { return }
         settingsCoordinator.showSettings(tab: .commands)
     }
 
     private func summary(of result: ShellCommandResult) -> String {
         switch result.termination {
-        case .launchFailed: return "The shell could not be started."
-        case .stopped: return "Stopped"
+        case .launchFailed: return String(localized: "The shell could not be started.")
+        case .stopped: return String(localized: "Stopped")
         case .exited(let status):
-            return status == 0 ? "Finished successfully." : "The command exited with status \(status)."
+            return status == 0
+                ? String(localized: "Finished successfully.")
+                : String(localized: "The command exited with status \(status).")
         }
     }
 
@@ -311,6 +404,9 @@ final class CustomCommandCoordinator {
         guard case .exited(status: 127) = result.termination, !command.loadsShellEnvironment else {
             return nil
         }
-        return "If this is a shell alias or function, turn on Load Shell Environment for this command."
+        return String(
+            localized: """
+                If this is a shell alias or function, turn on Load Shell Environment for this command.
+                """)
     }
 }

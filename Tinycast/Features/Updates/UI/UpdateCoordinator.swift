@@ -24,7 +24,7 @@ final class UpdateCoordinator {
     /// Environment injection and activity reads only — never for state this type owns.
     private unowned let core: AppCore
     @ObservationIgnored private lazy var window = AppWindowController(
-        title: "Software Update", contentSize: UpdateWindowView.initialSize,
+        title: String(localized: "Software Update"), contentSize: UpdateWindowView.initialSize,
         activation: core.activationPolicy)
     @ObservationIgnored private var installTask: Task<Void, Never>?
 
@@ -34,11 +34,19 @@ final class UpdateCoordinator {
     }
 
     var channel: ReleaseChannel { store.channel }
-    var runningVersion: String { store.runningVersion?.description ?? "unknown" }
+    var runningVersion: String { store.runningVersion?.description ?? String(localized: "unknown") }
 
     /// A local build has no release stream, so it does not advertise the command either.
     func applyEnabled() {
         core.appIndex.setCommandsVisible([.checkForUpdates], store.channel.updatesItself)
+    }
+
+    func applyAutomaticChecking() {
+        if core.settings.automaticallyCheckForUpdates {
+            store.start()
+        } else {
+            store.stop()
+        }
     }
 
     func focusExisting() -> Bool {
@@ -74,13 +82,14 @@ final class UpdateCoordinator {
             } else if answered {
                 stage = .upToDate
             } else {
-                stage = .failed(.downloadFailed("Tinycast could not reach GitHub."))
+                stage = .failed(.downloadFailed(String(localized: "Tinycast could not reach GitHub.")))
             }
         }
     }
 
     /// The automatic path: `false` answers that it withheld the prompt, so the store re-offers it.
     func presentIfAvailable(_ release: AvailableRelease) -> Bool {
+        guard core.settings.automaticallyCheckForUpdates else { return false }
         switch stage {
         // Already in hand: re-offering would throw away a download or the relaunch it earned.
         case .installing, .readyToRelaunch:
@@ -142,10 +151,8 @@ final class UpdateCoordinator {
         window.close()
     }
 
-    /// `NSApp.terminate`, never `exit`: it flushes a note draft and returns the HID remap.
     func relaunch() {
-        RelaunchRunner.relaunchAfterExit(Bundle.main.bundleURL)
-        NSApp.terminate(nil)
+        core.relaunch()
     }
 
     // MARK: - Private

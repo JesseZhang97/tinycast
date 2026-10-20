@@ -15,6 +15,29 @@ struct AIProviderTests {
         }
     }
 
+    static func instructionsFollowTheSetting() {
+        for prompt in [nil, "", "   \n\t "] as [String?] {
+            expect(
+                AIInstructions.compose(userPrompt: prompt, isEnabled: true, offersChoices: false)
+                    == AIPreamble.text,
+                "an absent or blank user prompt with choices off sends the preamble alone")
+        }
+        expect(
+            AIInstructions.compose(
+                userPrompt: "  Answer only in haiku.  ", isEnabled: true, offersChoices: true)
+                == AIPreamble.text + "\n\n" + AIPreamble.choices + "\n\nAnswer only in haiku.",
+            "instructions put the preamble and its choices before the trimmed user prompt")
+        for prompt in [nil, "Answer only in haiku."] as [String?] {
+            expect(
+                AIInstructions.compose(userPrompt: prompt, isEnabled: false, offersChoices: true)
+                    == nil,
+                "disabled instructions withhold the preamble, its choices and the user prompt")
+        }
+        expect(
+            (AIPreamble.text + AIPreamble.choices).count < 1_800,
+            "the preamble stays within its per-turn budget")
+    }
+
     /// A wrong document shape must fail here rather than mid-conversation.
     static func requestBodiesCarryDocuments() {
         let pdf = AIDocument(
@@ -77,10 +100,12 @@ struct AIProviderTests {
     }
 
     static func main() {
+        instructionsFollowTheSetting()
         providerPresetsResolveEndpoints()
         modelCatalogBuildsProviderRequests()
         modelCatalogDecodesProviderResponses()
         modelCatalogSearchesWithoutRenderingEverything()
+        exactMatchNamesOnlyAWholeModel()
         endpointPolicyRejectsUnsafeRemoteURLs()
         storedKeysDoNotFollowARetargetedConnection()
         savingAConnectionDecidesItsKey()
@@ -89,6 +114,7 @@ struct AIProviderTests {
         capturedStreamsDecodeHoweverTheyArrive()
         thinkTagStreamsDecodeHoweverTheyArrive()
         brokenStreamsFailLoudly()
+        refusalsShowTheProvidersOwnWords()
         brandsResolveFromModelIDs()
         requestBodiesCarryDocuments()
         codexProtocolFramesRoundTrip()
@@ -105,6 +131,7 @@ struct AIProviderTests {
         conversationSettingsPersistAndDecide()
         toolCatalogsAndTurnsEncodePerProvider()
         toolArgumentsSurviveArrivingInFragments()
+        geminiThoughtSignaturesRoundTrip()
         toolCapabilitiesFollowTheRoute()
         codexLaunchNamesServersAndKeepsSecretsOffArgv()
         codexLaunchHandsAServerItsOwnVariableNames()
@@ -113,6 +140,7 @@ struct AIProviderTests {
         codexElicitationsAreOnlyToolCalls()
         claudeControlFramesAnswerOneTool()
         aGatewayOffersNoneAsItsReasoningEffort()
+        declaredLevelsNeverReachAVendorOrOutliveTheirDeclaration()
 
         print("\(passes) passed, \(failures) failed")
         if failures > 0 { exit(1) }
@@ -170,6 +198,56 @@ struct AIProviderTests {
         expect(
             none == [.finished],
             "a turn that called nothing emits no tool event at all")
+    }
+
+    /// Gemini 3 400s on the follow-up turn if a call's signature doesn't come back unchanged.
+    static func geminiThoughtSignaturesRoundTrip() {
+        var decoder = AIStreamDecoder(shape: .openAICompatible)
+        let data = Data(
+            """
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",\
+            "function":{"name":"exa__search","arguments":"{}"},\
+            "extra_content":{"google":{"thought_signature":"sig=="}}},\
+            {"index":1,"id":"c2","function":{"name":"exa__fetch","arguments":"{}"}}]}}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+            data: [DONE]
+
+            """.utf8)
+        var events = (try? decoder.feed(data)) ?? []
+        events += (try? decoder.finish()) ?? []
+        let calls = events.compactMap { event -> AIToolCall? in
+            if case .toolCallRequested(let call) = event { return call }
+            return nil
+        }
+        expect(
+            calls.first?.thoughtSignature == "sig==",
+            "the signature Gemini attaches to a call survives decoding")
+        expect(
+            calls.count == 2 && calls.last?.thoughtSignature == nil,
+            "and a parallel call that arrived without one stays without one")
+
+        let body = AIRequestBody.make(
+            AIRequest(messages: [
+                AIMessage(role: .user, text: "search"),
+                AIMessage(role: .assistant, text: "", toolCalls: calls)
+            ]),
+            configuration: AIHTTPConfiguration(
+                provider: .gemini,
+                baseURL: URL(string: "https://generativelanguage.googleapis.com/v1beta/openai")!,
+                model: "gemini-3.5-flash-lite"))
+        let encoded =
+            (body["messages"] as? [[String: Any]])?
+            .first { $0["tool_calls"] != nil }?["tool_calls"] as? [[String: Any]] ?? []
+        let google =
+            (encoded.first?["extra_content"] as? [String: Any])?["google"] as? [String: Any]
+        expect(
+            google?["thought_signature"] as? String == "sig==",
+            "and goes back on the assistant turn exactly as it arrived")
+        expect(
+            encoded.count == 2 && encoded.last?["extra_content"] == nil,
+            "while a call with no signature sends no extra_content at all")
     }
 
     /// Only a route that can actually run one is ever offered a tool.
@@ -297,7 +375,7 @@ struct AIProviderTests {
     /// A body that named the default would 400 on every endpoint without a thinking mode.
     static func aGatewayOffersNoneAsItsReasoningEffort() {
         let gateway = AIConnection(
-            provider: .openAI, baseURL: "https://api.fusioncode.app/v1", models: ["m"])
+            provider: .openAI, baseURL: "https://gateway.example/v1", models: ["m"])
         expect(
             gateway.reasoningOptions(for: "m")?.efforts == ["default", "none"],
             "a preset pointed away from its own API offers the one effort a gateway can honour")
@@ -320,7 +398,7 @@ struct AIProviderTests {
             "a published catalog always wins over the synthesized switch")
 
         let turn = AIRequest(messages: [AIMessage(role: .user, text: "hi")])
-        let url = URL(string: "https://api.fusioncode.app/v1")!
+        let url = URL(string: "https://gateway.example/v1")!
         let on = AIRequestBody.make(
             turn,
             configuration: AIHTTPConfiguration(provider: .openAI, baseURL: url, model: "m"))
@@ -334,6 +412,87 @@ struct AIProviderTests {
         expect(
             (off["thinking"] as? [String: String])?["type"] == "disabled",
             "None asks the endpoint to answer directly")
+        expect(off["reasoning_effort"] == nil, "None sends no effort field beside it")
+
+        var declared = AIConnection(
+            provider: .openAI, baseURL: "https://gateway.example/v1", models: ["m"])
+        declared.declareLevels(["high", "low", "bogus"], for: "m")
+        expect(
+            declared.reasoningOptions(for: "m")?.efforts == ["default", "low", "high", "none"],
+            "declared levels sit in ladder order between Default and None, and strangers drop")
+        expect(
+            declared.reasoningOptions(for: "m")?.resolvedEffort(nil) == "default",
+            "a declaration leaves reasoning alone until the reader picks a level")
+        expect(declared.declaredLevels(for: "m") == ["low", "high"], "the declaration reads back")
+        declared.declareLevels([], for: "m")
+        expect(
+            declared.reasoningOptions(for: "m")?.efforts == ["default", "none"],
+            "clearing it returns to the Default/None pair")
+
+        let level = AIRequestBody.make(
+            turn,
+            configuration: AIHTTPConfiguration(
+                provider: .openAI, baseURL: url, model: "m", effort: "low"))
+        expect(
+            level["reasoning_effort"] as? String == "low",
+            "a declared level goes out as OpenAI's own reasoning_effort")
+        expect(level["reasoning"] == nil, "and not as OpenRouter's reasoning object")
+        let unset = AIRequestBody.make(
+            turn,
+            configuration: AIHTTPConfiguration(
+                provider: .openAI, baseURL: url, model: "m", effort: "default"))
+        expect(unset["reasoning_effort"] == nil, "Default still sends no field")
+    }
+
+    static func declaredLevelsNeverReachAVendorOrOutliveTheirDeclaration() {
+        var gateway = AIConnection(
+            provider: .openAI, baseURL: "https://gateway.example/v1", models: ["m"])
+        gateway.declareLevels(["low", "high"], for: "m")
+        expect(gateway.offeredEffort("high", for: "m") == "high", "a declared level is sent")
+        expect(gateway.offeredEffort(nil, for: "m") == nil, "no saved effort sends none")
+
+        gateway.declareLevels(["low"], for: "m")
+        expect(
+            gateway.offeredEffort("high", for: "m") == nil,
+            "a chat still holding an unticked level stops sending it")
+
+        var vendor = gateway
+        vendor.baseURL = AIProviderKind.openAI.defaultBaseURL
+        expect(
+            vendor.reasoningOptions(for: "m") == nil,
+            "levels declared for a gateway are not offered once the URL is the vendor's own")
+        expect(vendor.offeredEffort("low", for: "m") == nil, "nor sent to the vendor")
+
+        let openRouter = AIConnection(
+            id: UUID(), provider: .openRouter, models: ["m"],
+            reasoningOptions: ["m": .init(efforts: ["high", "low"], defaultEffort: "high")])
+        expect(
+            openRouter.offeredEffort("high", for: "m") == "high",
+            "OpenRouter's own catalog still reaches its default URL")
+        expect(
+            openRouter.offeredEffort("xhigh", for: "m") == nil,
+            "a level its catalog dropped is not sent")
+        expect(
+            AIConnection(provider: .openAI, models: ["m"]).offeredEffort("high", for: "m") == nil,
+            "an old OpenRouter effort left on a vendor connection is not sent")
+
+        var retargeted = gateway
+        retargeted.dropDeclaredLevels()
+        expect(
+            retargeted.reasoningOptions == nil,
+            "levels declared for one gateway are dropped when the URL moves")
+        var movedOpenRouter = openRouter
+        movedOpenRouter.dropDeclaredLevels()
+        expect(
+            movedOpenRouter.reasoningOptions == openRouter.reasoningOptions,
+            "OpenRouter's catalog is no declaration, so a moved URL keeps it")
+
+        expect(gateway.takesDeclaredLevels, "a gateway takes declared levels")
+        expect(!vendor.takesDeclaredLevels, "a vendor URL does not")
+        expect(
+            !AIConnection(provider: .openRouter, baseURL: "https://proxy.example/v1")
+                .takesDeclaredLevels,
+            "OpenRouter at any URL does not, because its catalog names the levels")
     }
 
     static func providerPresetsResolveEndpoints() {
@@ -438,6 +597,26 @@ struct AIProviderTests {
             openAIModels?.last?.reasoningOptions?.resolvedEffort(nil) == "medium",
             "OpenRouter reasoning metadata keeps the model's advertised default")
 
+        let gateway = Data(
+            """
+            {"data":[
+                {"id":"model-c","name":"Model C","reasoning":true,
+                 "architecture":{"input_modalities":["text","image"]}},
+                {"id":"model-d","reasoning":"high"},
+                {"id":"model-e","reasoning":{"supported_efforts":["low"],"default_effort":"low"}}
+            ]}
+            """.utf8)
+        let gatewayModels = try? AIModelDiscovery.decode(gateway, shape: .openAI)
+        expect(
+            gatewayModels == [
+                .init(id: "model-c", name: "Model C", inputModalities: ["text", "image"]),
+                .init(id: "model-d", name: "model-d"),
+                .init(
+                    id: "model-e", name: "model-e",
+                    reasoningOptions: .init(efforts: ["low"], defaultEffort: "low"))
+            ],
+            "a reasoning field that is not an object is ignored, and the catalog still loads")
+
         let router = AIConnection(
             provider: .openRouter, models: ["model-a", "model-b"], visionModels: ["model-b"])
         expect(
@@ -489,6 +668,33 @@ struct AIProviderTests {
                 models, query: "gpt", excluding: ["openai/gpt-small"], limit: 1
             ).map(\.id) == ["openai/gpt-large"],
             "search excludes selected models and caps visible results")
+    }
+
+    static func exactMatchNamesOnlyAWholeModel() {
+        let models = [
+            AIModelDiscovery.Model(id: "gpt-5.4-mini", name: "GPT-5.4 Mini"),
+            AIModelDiscovery.Model(id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4")
+        ]
+        expect(
+            AIModelDiscovery.exactMatch(models, query: " GPT-5.4-MINI ")?.id == "gpt-5.4-mini",
+            "an exact ID matches regardless of case and surrounding spaces")
+        expect(
+            AIModelDiscovery.exactMatch(models, query: "claude sonnet 4")?.id
+                == "claude-sonnet-4-20250514",
+            "a display name resolves to its model ID")
+        expect(
+            AIModelDiscovery.exactMatch(models, query: "gpt-5") == nil,
+            "a short ID that a listed ID contains is not an exact match")
+        expect(
+            AIModelDiscovery.exactMatch(models, query: "  ") == nil,
+            "a blank query matches nothing")
+        let aliased = [
+            AIModelDiscovery.Model(id: "gateway-default", name: "gpt-5"),
+            AIModelDiscovery.Model(id: "gpt-5", name: "GPT-5")
+        ]
+        expect(
+            AIModelDiscovery.exactMatch(aliased, query: "gpt-5")?.id == "gpt-5",
+            "an exact ID wins over an earlier model whose display name matches")
     }
 
     static func endpointPolicyRejectsUnsafeRemoteURLs() {
@@ -838,6 +1044,167 @@ struct AIProviderTests {
         return events
     }
 
+    /// A refusal is read, not discarded: the status's line, then what the provider said under it.
+    static func refusalsShowTheProvidersOwnWords() {
+        func body(_ json: String) -> Data { Data(json.utf8) }
+        func shown(_ status: Int, _ json: String, retryAfter: String? = nil) -> String {
+            AIProviderFailure.description(
+                status: status, body: body(json), retryAfter: retryAfter, secrets: [])
+        }
+        let general = "The provider rejected the model or request (HTTP 400)."
+        expect(
+            shown(
+                400,
+                #"{"error":{"object":"error","type":"invalid_request_error","message":"#
+                    + #""Model accounts/fireworks/models/glm-5p3-flash does not support image input."}}"#)
+                == "\(general)\n\nModel accounts/fireworks/models/glm-5p3-flash does not support image input.",
+            "OpenAI's error shape shows its message under the line")
+        expect(
+            shown(
+                400,
+                #"{"error":{"message":"Provider returned error","code":400,"metadata":"#
+                    + #"{"raw":"{\"error\":{\"message\":\"Maximum context length is 8192 tokens\"}}","#
+                    + #""provider_name":"Fireworks"}}}"#)
+                == "\(general)\n\nMaximum context length is 8192 tokens",
+            "OpenRouter's nested upstream body is read through its raw string")
+        expect(
+            shown(
+                400,
+                #"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}"#)
+                == "\(general)\n\nprompt is too long",
+            "Anthropic's shape too")
+        expect(
+            shown(
+                400, #"[{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}]"#)
+                == "\(general)\n\nAPI key not valid.",
+            "and Gemini's array")
+        expect(
+            shown(404, #"{"object":"error","message":"The model `x` does not exist.","code":404}"#)
+                == "The provider rejected the model or request (HTTP 404).\n\nThe model `x` does not exist.",
+            "and vLLM's")
+        expect(
+            shown(429, #"{"error":{"message":"You exceeded your current quota."}}"#, retryAfter: "12")
+                == "Rate limit reached — retry after 12 seconds.\n\nYou exceeded your current quota.",
+            "a status keeps its own line, with the provider's reason under it")
+        expect(
+            shown(400, "Bad request: unknown field") == "\(general)\n\nBad request: unknown field",
+            "a plain-text body is shown as sent")
+        expect(
+            shown(502, "<html><body>Bad gateway</body></html>")
+                == "The provider is temporarily unavailable (HTTP 502).",
+            "an HTML error page is not pasted into the chat")
+        expect(
+            shown(401, "") == "API key rejected — check it in Settings.",
+            "an empty body leaves the line alone")
+        expect(
+            shown(
+                502,
+                #"{"error":{"message":"Upstream timed out","metadata":{"raw":"<html>Bad gateway</html>"}}}"#)
+                == "The provider is temporarily unavailable (HTTP 502).\n\nUpstream timed out",
+            "an HTML page nested in the body gives way to the message beside it")
+        expect(
+            shown(502, #"{"error":"<html><body>Bad gateway</body></html>"}"#)
+                == "The provider is temporarily unavailable (HTTP 502).",
+            "and is left out when it is all there is")
+        expect(
+            shown(400, #"{"error":{"message":"Provider returned error","metadata":{"raw":"{\"code\":7}"}}}"#)
+                == "\(general)\n\nProvider returned error",
+            "an upstream body with no message falls back to the wrapper's")
+        expect(
+            shown(400, #""Bad request""#) == "\(general)\n\nBad request",
+            "a bare JSON string loses its quotes")
+        expect(
+            shown(400, "[Errno 111] Connection refused") == "\(general)\n\n[Errno 111] Connection refused",
+            "text that only starts like JSON is still text")
+
+        let echo = String(repeating: "A", count: AIProviderFailure.bodyLimit)
+        let oversized =
+            #"{"detail":[{"type":"string_type","msg":"Input should be a valid string","input":"\#(echo)"}]}"#
+        expect(
+            AIProviderFailure.description(
+                status: 422, body: body(oversized).prefix(AIProviderFailure.bodyLimit), retryAfter: nil,
+                secrets: [])
+                == "The provider rejected the model or request (HTTP 422).\n\nInput should be a valid string",
+            "a body the cap cut still gives up the message near its start")
+        expect(
+            shown(400, #"{"error":{"message":"Half a mess"#) == general,
+            "and one cut inside its message shows no fragment of JSON")
+        expect(
+            shown(400, "[\n  {\"error\": {\"message\": \"Too long\"}") == "\(general)\n\nToo long",
+            "a cut array is read the same way, however it is spaced")
+        expect(
+            shown(400, #"["first error", "second"#) == general, "and a cut list of strings is not shown raw")
+        expect(shown(400, "[1, 2,") == general, "nor a cut list of anything else")
+        expect(
+            shown(400, #"["model"] is not supported"#) == "\(general)\n\n[\"model\"] is not supported",
+            "a sentence that opens with a bracket and closes it is still a sentence")
+        expect(
+            shown(400, "{model} was not found") == "\(general)\n\n{model} was not found",
+            "whichever bracket it is")
+        expect(
+            shown(400, "[request timed out]") == "\(general)\n\n[request timed out]",
+            "and so is one that is bracketed from end to end")
+        expect(
+            shown(
+                400,
+                #"{"message":"<html>Bad gateway</html>","detail":"Reduce your prompt","padding":"#)
+                == "\(general)\n\nReduce your prompt",
+            "a cut body's first candidate being an HTML page does not hide the next one")
+        expect(
+            shown(
+                400,
+                #"{"error":{"message":"Provider returned error","metadata":{"raw":"{\"error\":{\"mess"}}}"#)
+                == "\(general)\n\nProvider returned error",
+            "an upstream body that arrived cut falls back to the wrapper's message")
+        expect(
+            shown(
+                422,
+                #"{"detail":[{"input":{"error":"boom from a tool"},"msg":"Input should be a valid string","x":"#
+            )
+                == "The provider rejected the model or request (HTTP 422).\n\nInput should be a valid string",
+            "an `error` echoed back in the request does not pass for the message")
+
+        let long = String(repeating: "x", count: AIProviderFailure.messageLimit + 50)
+        expect(
+            shown(400, #"{"error":{"message":"\#(long)"}}"#).hasSuffix("x…")
+                && shown(400, #"{"error":{"message":"\#(long)"}}"#).count
+                    == general.count + 2 + AIProviderFailure.messageLimit + 1,
+            "a very long message is cut rather than filling the chat")
+
+        let key = "fw_3c8a7b2e91d04f5a"
+        let echoed = AIProviderFailure.description(
+            status: 400,
+            body: body(#"{"error":{"message":"Bad header: Bearer \#(key), also sk-proj-abcdefghijklmnop"}}"#),
+            retryAfter: nil, secrets: [key])
+        expect(
+            !echoed.contains(key) && !echoed.contains("sk-proj-abcdef") && echoed.contains("[redacted]"),
+            "the key, a bearer token and key-shaped strings never reach the transcript")
+
+        let filler = String(repeating: "x", count: AIProviderFailure.messageLimit - 8)
+        let straddling = AIProviderFailure.description(
+            status: 400, body: body(#"{"error":{"message":"\#(filler) sk-proj-abcdefghijklmnop"}}"#),
+            retryAfter: nil, secrets: [])
+        expect(
+            !straddling.contains("sk-pro"),
+            "a key the cut lands inside is redacted first, not left half-shown")
+        expect(
+            AIProviderFailure.redacted("Invalid key: abc123.", secrets: ["abc123"])
+                == "Invalid key: [redacted].",
+            "a short key is redacted too")
+        expect(
+            AIProviderFailure.redacted("Port 7 refused key 7 (70 tries)", secrets: ["7", ""])
+                == "Port [redacted] refused key [redacted] (70 tries)",
+            "but only as a whole word, so it cannot eat into a longer one")
+        expect(
+            AIProviderFailure.redacted("Invalid key: abcdef", secrets: ["abcdef"])
+                == "Invalid key: [redacted]",
+            "a short key with no digit in it is a key all the same")
+        expect(
+            AIProviderFailure.redacted("Received API Key = sk-1234", secrets: ["sk-1234"])
+                == "Received API Key = [redacted]",
+            "as is a local proxy's short key, which no key shape would catch")
+    }
+
     static func brokenStreamsFailLoudly() {
         var decoder = AIStreamDecoder(shape: .openAICompatible)
         let failure = Data(
@@ -858,12 +1225,78 @@ struct AIProviderTests {
         expect(decoder.isTerminal, "a mid-stream error ends the stream")
         expect(events.isEmpty, "nothing after the error is decoded")
 
+        var relayed = AIStreamDecoder(shape: .openAICompatible, secrets: ["hunter2-gateway-key"])
+        let upstream =
+            Data(
+                (#"data: {"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"#
+                    + #""{\"error\":{\"message\":\"Too long for key hunter2-gateway-key\"}}"}}}"#).utf8)
+            + Data("\n\n".utf8)
+        var relayedError: Error?
+        do { _ = try relayed.feed(upstream) } catch { relayedError = error }
+        expect(
+            relayedError as? AIProviderError == .responseFailed("Too long for key [redacted]"),
+            "a mid-stream error reads through to the upstream reason, with the connection's key out")
+
+        var paged = AIStreamDecoder(shape: .openAICompatible)
+        let page = Data(#"data: {"error":{"message":"<html>Bad gateway</html>"}}"#.utf8) + Data("\n\n".utf8)
+        var pagedError: Error?
+        do { _ = try paged.feed(page) } catch { pagedError = error }
+        expect(
+            pagedError as? AIProviderError
+                == .responseFailed("The provider stopped the response with an error."),
+            "a mid-stream error that is only an HTML page says so in Tinycast's own words")
+
+        var bracketed = AIStreamDecoder(shape: .openAICompatible)
+        let prose =
+            Data(#"data: {"error":{"message":"[\"model\"] is not supported"}}"#.utf8) + Data("\n\n".utf8)
+        var bracketedError: Error?
+        do { _ = try bracketed.feed(prose) } catch { bracketedError = error }
+        expect(
+            bracketedError as? AIProviderError == .responseFailed(#"["model"] is not supported"#),
+            "a mid-stream message that opens with a bracket is still shown")
+
         var malformed = AIStreamDecoder(shape: .openAICompatible)
         let garbage = Data("data: {not json\n\n".utf8)
         expect(
             (try? malformed.feed(garbage)) == nil,
             "unparseable JSON is rejected rather than skipped")
         expect(malformed.isTerminal, "a malformed frame ends the stream")
+
+        var overloaded = AIStreamDecoder(shape: .anthropic)
+        let said =
+            Data(
+                #"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.utf8)
+            + Data("\n\n".utf8)
+        var overloadedError: Error?
+        do { _ = try overloaded.feed(said) } catch { overloadedError = error }
+        expect(
+            overloadedError?.localizedDescription
+                == "The provider stopped the response with an error.\n\nOverloaded",
+            "an Anthropic error event shows what it said under the line")
+
+        var echoing = AIStreamDecoder(shape: .anthropic, secrets: ["hunter2-gateway-key"])
+        let echoed =
+            Data(
+                #"data: {"type":"error","error":{"type":"api_error","message":"Bad key hunter2-gateway-key"}}"#
+                    .utf8)
+            + Data("\n\n".utf8)
+        var echoedError: Error?
+        do { _ = try echoing.feed(echoed) } catch { echoedError = error }
+        expect(
+            echoedError?.localizedDescription.hasSuffix("Bad key [redacted]") == true,
+            "and never the key the connection was using")
+
+        var pagedAnthropic = AIStreamDecoder(shape: .anthropic)
+        let anthropicPage =
+            Data(
+                #"data: {"type":"error","error":{"type":"api_error","message":"<html>Bad gateway</html>"}}"#
+                    .utf8)
+            + Data("\n\n".utf8)
+        var pagedAnthropicError: Error?
+        do { _ = try pagedAnthropic.feed(anthropicPage) } catch { pagedAnthropicError = error }
+        expect(
+            pagedAnthropicError?.localizedDescription == "The provider stopped the response with an error.",
+            "nor an HTML page in place of a message")
 
         var anthropic = AIStreamDecoder(shape: .anthropic)
         let rejected = Data(
@@ -1335,13 +1768,58 @@ struct AIProviderTests {
             InstalledAIStreamDecoder.decode(openCodeText, kind: .openCode)
                 == InstalledAIStreamFrame(events: [.text("Hello")], sessionID: "ses_1"),
             "OpenCode text and its cleanup session decode together")
-        let openCodeFinish = Data(
-            #"{"type":"step_finish","part":{"tokens":{"input":12,"output":4}}}"#.utf8)
-        let openCodeFrame = InstalledAIStreamDecoder.decode(openCodeFinish, kind: .openCode)
+        let openCodeReasoning = Data(
+            #"{"type":"reasoning","sessionID":"ses_1","part":{"text":"Weighing it"}}"#.utf8)
         expect(
-            openCodeFrame.events == [.usage(AIUsage(inputTokens: 12, outputTokens: 4))]
-                && openCodeFrame.completed,
-            "OpenCode completion reports usage and finishes")
+            InstalledAIStreamDecoder.decode(openCodeReasoning, kind: .openCode).events
+                == [.reasoning("\n\nWeighing it")],
+            "OpenCode reasoning opens its own block")
+        let openCodeStep = Data(
+            #"""
+            {"type":"step_finish","sessionID":"ses_1","part":{"cost":0.25,"tokens":{"input":12,
+            "output":4,"reasoning":3,"cache":{"read":5,"write":1}}}}
+            """#.utf8)
+        let openCodeFrame = InstalledAIStreamDecoder.decode(openCodeStep, kind: .openCode)
+        expect(
+            openCodeFrame.events == [
+                .usage(
+                    AIUsage(
+                        inputTokens: 12, outputTokens: 7, cachedInputTokens: 6,
+                        reasoningTokens: 3, costUSD: 0.25))
+            ] && !openCodeFrame.completed,
+            "an OpenCode step reports usage and leaves the finish to the clean exit")
+        let openCodeError = Data(
+            #"{"type":"error","sessionID":"","error":{"type":"unknown","message":"No provider"}}"#.utf8)
+        let openCodeErrorFrame = InstalledAIStreamDecoder.decode(openCodeError, kind: .openCode)
+        expect(
+            openCodeErrorFrame.error == "No provider" && openCodeErrorFrame.sessionID == nil,
+            "an OpenCode error before any session fails the turn with nothing to delete")
+        let openCodeModels = #"""
+            {"location":{"directory":"/w"},"data":[
+            {"id":"gpt-5","providerID":"openai","name":"GPT-5",
+            "capabilities":{"tools":true,"input":["text","image"],"output":["text"]},
+            "variants":[{"id":"high"},{"id":"low"},{"id":"minimal"}]},
+            {"id":"glm-4.6","providerID":"zai","name":"GLM 4.6",
+            "capabilities":{"tools":true,"input":["text"],"output":["text"]},"variants":[]},
+            {"id":"claude-sonnet-4-5","providerID":"anthropic","name":"Claude Sonnet 4.5",
+            "capabilities":{"tools":true,"input":["text","image","pdf"],"output":["text"]},
+            "variants":[]}]}
+            """#
+        let openCodeCatalog = InstalledAIModel.openCodeCatalog(openCodeModels)
+        expect(
+            openCodeCatalog.map(\.id) == [
+                "anthropic/claude-sonnet-4-5", "openai/gpt-5", "zai/glm-4.6"
+            ],
+            "OpenCode models are listed by their provider-qualified reference")
+        expect(
+            openCodeCatalog[1].efforts.map(\.id) == ["minimal", "low", "high"],
+            "OpenCode variants become efforts in reasoning order")
+        expect(
+            openCodeCatalog.map(\.acceptsImages) == [true, true, false],
+            "OpenCode takes images only where the model's input does")
+        expect(
+            InstalledAIModel.openCodeCatalog("Error: server failed to start").isEmpty,
+            "an OpenCode answer that is not the model list yields no models")
 
         let claudeText = Data(
             #"{"type":"stream_event","event":{"delta":{"type":"text_delta","text":"Hi"}}}"#.utf8)

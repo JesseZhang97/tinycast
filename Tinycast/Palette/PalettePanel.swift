@@ -2,7 +2,6 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Borderless floating panel that hosts the SwiftUI command palette.
 final class PalettePanel: NSPanel {
     enum HeaderFieldBoundary {
         case leading
@@ -11,7 +10,7 @@ final class PalettePanel: NSPanel {
 
     /// Bare backspace, which the field editor swallows before `onKeyPress` could see it.
     var onBareBackspace: (() -> Bool)?
-    /// Escape, which an `AVPlayerView` in the preview answers before `onKeyPress` could see it.
+    /// Escape, which a focused form field answers before `onKeyPress` could see it.
     var onEscape: (() -> Bool)?
     /// Command chords the field editor swallows, plus the ones no main menu handles.
     var onCommandShortcut: ((NSEvent) -> Bool)?
@@ -19,6 +18,8 @@ final class PalettePanel: NSPanel {
     var onFieldEditorFocused: ((NSTextInputContext) -> Void)?
     /// Inline argument fields use arrows at their text boundaries to continue their focus ring.
     var onHeaderFieldBoundaryArrow: ((HeaderFieldBoundary) -> Bool)?
+    var onDismissMenu: (() -> Void)?
+    private var dismissingMouseButton: Int?
     /// Arms hover from `sendEvent`, the one place both event streams pass through.
     weak var paletteState: PaletteState? {
         didSet {
@@ -34,6 +35,10 @@ final class PalettePanel: NSPanel {
 
     func selectAllFieldEditorText() {
         fieldEditor?.selectAll(nil)
+    }
+
+    func moveFieldEditorCaretToEnd() {
+        fieldEditor?.moveToEndOfDocument(nil)
     }
 
     /// Nil while a selection can still collapse normally, or when the caret is not at an edge.
@@ -135,12 +140,28 @@ final class PalettePanel: NSPanel {
     /// Clip view and field editor both claim a cursor, so the panel settles it after `super`.
     private func applyCursorPolicy(for event: NSEvent) {
         guard Self.cursorEvents.contains(event.type) else { return }
-        // Outset: the field editor AppKit installs is a point taller than the field it serves.
-        let text = searchFieldRect.insetBy(dx: -Self.fieldEditorSlack, dy: -Self.fieldEditorSlack)
-        let cursor: NSCursor =
-            text.contains(convertPoint(fromScreen: NSEvent.mouseLocation)) ? .iBeam : .arrow
+        let point = convertPoint(fromScreen: NSEvent.mouseLocation)
+        let cursor = cursor(at: point)
         guard NSCursor.current !== cursor else { return }
         cursor.set()
+    }
+
+    func cursor(at point: NSPoint) -> NSCursor {
+        if let contentView, isEditableText(in: contentView, at: point) { return .iBeam }
+        guard paletteState?.mode.isNativeEditor != true else { return .arrow }
+        // Outset: the field editor AppKit installs is a point taller than the field it serves.
+        let text = searchFieldRect.insetBy(dx: -Self.fieldEditorSlack, dy: -Self.fieldEditorSlack)
+        return text.contains(point) ? .iBeam : .arrow
+    }
+
+    private func isEditableText(in view: NSView, at point: NSPoint) -> Bool {
+        let local = view.convert(point, from: nil)
+        guard !view.isHidden, view.alphaValue > 0,
+            view.bounds.intersection(view.visibleRect).contains(local)
+        else { return false }
+        if let field = view as? NSTextField { return field.isEditable }
+        if let text = view as? NSTextView { return text.isEditable }
+        return view.subviews.contains { isEditableText(in: $0, at: point) }
     }
 
     /// docs/features/palette.md: a 24pt editor in a 23pt field, so its I-beam overhangs.
@@ -156,6 +177,10 @@ final class PalettePanel: NSPanel {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        if consumeMenuDismissal(event) { return }
+        if event.type == .scrollWheel, paletteState?.mode.isNativeEditor == true {
+            onDismissMenu?()
+        }
         switch event.type {
         case .mouseMoved: paletteState?.notePointerMoved(to: NSEvent.mouseLocation)
         // Keys and scrolling both slide rows under the pointer without it choosing any of them.
@@ -189,6 +214,7 @@ final class PalettePanel: NSPanel {
         if event.type == .keyDown,
             Int(event.keyCode) == kVK_Delete,
             event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]),
+            fieldEditor?.hasMarkedText() != true,
             onBareBackspace?() == true
         {
             return
@@ -206,6 +232,25 @@ final class PalettePanel: NSPanel {
             return
         }
         super.sendEvent(event)
+    }
+
+    private func consumeMenuDismissal(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown:
+            dismissingMouseButton = nil
+            guard paletteState?.menuOpen == true, let onDismissMenu else { return false }
+            dismissingMouseButton = event.buttonNumber
+            onDismissMenu()
+            return true
+        case .leftMouseDragged, .rightMouseDragged, .leftMouseUp, .rightMouseUp:
+            guard dismissingMouseButton == event.buttonNumber else { return false }
+            if event.type == .leftMouseUp || event.type == .rightMouseUp {
+                dismissingMouseButton = nil
+            }
+            return true
+        default:
+            return false
+        }
     }
     init<Content: View>(rootView: Content) {
         super.init(
@@ -226,7 +271,7 @@ final class PalettePanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        animationBehavior = .none
+        animationBehavior = .documentWindow
         isReleasedWhenClosed = false
 
         let hosting = NSHostingView(rootView: rootView)
@@ -240,6 +285,15 @@ final class PalettePanel: NSPanel {
     override func resignKey() {
         super.resignKey()
         paletteState?.noteCommandHeld(false)
+    }
+
+    /// A child hidden with its parent skips its next open animation.
+    override func orderOut(_ sender: Any?) {
+        for child in childWindows ?? [] {
+            removeChildWindow(child)
+            child.orderOut(nil)
+        }
+        super.orderOut(sender)
     }
 
     override var canBecomeKey: Bool { true }

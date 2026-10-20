@@ -68,7 +68,13 @@ struct KeyShortcut: Hashable, Sendable {
             carbonKeyCode: carbonKeyCode, carbonModifiers: Self.carbonModifiers(from: retargeted))
     }
 
-    /// `modifierSymbols` with the Hyper chord collapsed to "✦", when one is configured at all.
+    func secureInputEquivalent(of hyperChord: NSEvent.ModifierFlags) -> KeyShortcut? {
+        guard modifierFlags.isSuperset(of: hyperChord) else { return nil }
+        let reduced = modifierFlags.subtracting(hyperChord).union(.control)
+        return KeyShortcut(
+            carbonKeyCode: carbonKeyCode, carbonModifiers: Self.carbonModifiers(from: reduced))
+    }
+
     static func collapsedModifierSymbols(
         from flags: NSEvent.ModifierFlags, hyperChord: NSEvent.ModifierFlags?
     ) -> [String] {
@@ -93,20 +99,24 @@ struct KeyShortcut: Hashable, Sendable {
         functionKeyNames[keyCode] != nil
     }
 
+    /// 🎤, as remapped by `DictationKeyManager`.
+    var isDictationKey: Bool { carbonKeyCode == kVK_F20 }
+
     private static let allModifiers = cmdKey | optionKey | controlKey | shiftKey | kEventKeyModifierFnMask
 
     // MARK: - Key glyph
 
     /// A fixed table for keys with no character, else translated through the current layout.
     @MainActor private var keyGlyph: String {
+        if isDictationKey { return "🎤" }
         if let special = Self.specialKeyGlyphs[carbonKeyCode] { return special }
         if let name = Self.functionKeyNames[carbonKeyCode] { return name }
         return ASCIIKeyboardLayout.character(for: carbonKeyCode)?.uppercased() ?? "?"
     }
 
     private static let specialKeyGlyphs: [Int: String] = [
-        kVK_Return: "↵", kVK_ANSI_KeypadEnter: "⌤", kVK_Tab: "⇥", kVK_Space: "Space",
-        kVK_Delete: "⌫", kVK_ForwardDelete: "⌦", kVK_Escape: "⎋",
+        kVK_Return: "↵", kVK_ANSI_KeypadEnter: "⌤", kVK_Tab: "⇥", kVK_Space: String(localized: "Space"),
+        kVK_Delete: "⌫", kVK_ForwardDelete: "⌦", kVK_Escape: "esc",
         kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
         kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟", kVK_Help: "?⃝"
     ]

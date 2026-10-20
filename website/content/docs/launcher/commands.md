@@ -18,7 +18,7 @@ and only appear while the feature is on. The rest are in **Settings → Commands
 | [Clipboard](/docs/features/clipboard)              | Clipboard History · Paste Sequentially                                                                                                                                                             |
 | [Emoji & Symbols](/docs/features/emoji)            | Search Emoji & Symbols                                                                                                                                                                             |
 | [File Search](/docs/features/file-search)          | Search Files                                                                                                                                                                                       |
-| [Navigation](/docs/features/navigation)            | Switch Windows · Search Menu Bar Items                                                                                                                                                             |
+| [Navigation](/docs/features/navigation)            | Switch Windows · Switch Windows Backwards · Search Menu Bar Items                                                                                                                                  |
 | [Calendar](/docs/features/calendar)                | Join Next Meeting · My Schedule · Create Event · Copy Meeting Link · Open in Calendar                                                                                                              |
 | [Notes](/docs/features/notes)                      | Show Notes · Create Note · Search Notes                                                                                                                                                            |
 | [Window Management](/docs/features/window-layouts) | Create Window Layout · Create Layout from Current Windows · Switch Room · Create Room                                                                                                              |
@@ -60,6 +60,10 @@ half-remembering its flags.
 Each command has an **Enabled** checkbox on its row. Clearing it keeps the command, its shortcut and
 its settings, but the command can't run until you select the checkbox again.
 
+To take a command out of the main search but keep its shortcut, select it in the launcher and press
+<kbd>⇧</kbd><kbd>⌘</kbd><kbd>H</kbd> (**Hide from Root Search**). Turn **Show in root search** back
+on in its editor to bring it back.
+
 ### The editor
 
 | Field                  | What it does                                                                 |
@@ -67,6 +71,7 @@ its settings, but the command can't run until you select the checkbox again.
 | Name                   | What you search for                                                          |
 | Command                | The shell command, like `/usr/bin/pmset displaysleepnow`                     |
 | Icon                   | A symbol for its row, dialogs and output window                              |
+| Show in root search    | Lists it in the main search. Off, only its shortcut runs it.                 |
 | Arguments              | Values to ask for first, passed as `$1`, `$2` …                              |
 | Run In                 | The folder it starts in. Empty means your home folder.                       |
 | Load shell environment | Loads your `.zshrc`, so aliases, functions and `PATH` work. Slower to start. |

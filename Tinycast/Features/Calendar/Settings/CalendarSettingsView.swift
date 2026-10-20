@@ -11,9 +11,7 @@ struct CalendarSettingsView: View {
             FeatureSwitchSection(
                 anchor: .calendarCalendar,
                 enableTitle: "Join meetings from Tinycast",
-                enableSubtitle:
-                    "Reads \(settings.calendarSpan.possessivePhrase) events for join links. "
-                    + "Nothing leaves this Mac.",
+                enableSubtitle: enableSubtitle,
                 isEnabled: enabledBinding,
                 showsInLauncher: $settings.calendarShowInLauncher,
                 showsIcon: true,
@@ -33,8 +31,8 @@ struct CalendarSettingsView: View {
             if settings.calendarEnabled, store.access == .notDetermined {
                 Section {
                     SettingsRow(
-                        title: "Calendar access is needed",
-                        subtitle: "Needed to read events and find join links."
+                        title: String(localized: "Calendar access is needed"),
+                        subtitle: String(localized: "Needed to read events and find join links.")
                     ) {
                         Button("Allow Calendar Access…") {
                             core.calendarCoordinator.setCalendarEnabled(true)
@@ -44,8 +42,8 @@ struct CalendarSettingsView: View {
             } else if store.access == .denied {
                 Section {
                     SettingsRow(
-                        title: "Calendar access is off",
-                        subtitle: "Allow it in Privacy & Security ▸ Calendars."
+                        title: String(localized: "Calendar access is off"),
+                        subtitle: String(localized: "Allow it in Privacy & Security ▸ Calendars.")
                     ) {
                         Button("Open System Settings…") { Permissions.openCalendarSettings() }
                     }
@@ -58,13 +56,18 @@ struct CalendarSettingsView: View {
                         Text(window.title).tag(window)
                     }
                 } label: {
-                    SettingsRowTitle(.calendarJoining, "Show the join card")
+                    SettingsRowTitle(.calendarJoining, "Show the meeting card")
                     Text("Before and after a meeting starts.")
                 }
                 Toggle(isOn: $settings.autoJoinMeetings) {
                     SettingsRowTitle(.calendarJoining, "Auto Join Meetings")
                     Text("As they start.")
                 }
+                Toggle(isOn: $settings.autoJoinNamedProvidersOnly) {
+                    SettingsRowTitle(.calendarJoining, "Only join known meeting services")
+                }
+                .toggleStyle(.checkbox)
+                .settingsEnabled(settings.autoJoinMeetings)
                 Toggle(isOn: $settings.autoJoinConfirms) {
                     SettingsRowTitle(.calendarJoining, "Confirm before joining")
                 }
@@ -139,8 +142,19 @@ struct CalendarSettingsView: View {
         .formStyle(.grouped)
         .settingsScrollTarget(.calendar)
         .releasesFocusOnOutsideClick()
-        // The snapshot is only reloaded while the feature runs, so a grant made in Settings lands here.
+        // The snapshot reloads only while the feature runs, so a Settings grant lands here.
         .onAppear { store.refreshAccess() }
+    }
+
+    private var enableSubtitle: LocalizedStringResource {
+        switch settings.calendarSpan {
+        case .today:
+            "Reads today's events for join links. Nothing leaves this Mac."
+        case .todayAndTomorrow:
+            "Reads today's and tomorrow's events for join links. Nothing leaves this Mac."
+        case .nextSevenDays:
+            "Reads the next 7 days' events for join links. Nothing leaves this Mac."
+        }
     }
 
     /// Routed through the coordinator so enabling, which is also consent, confirms first.
@@ -211,8 +225,9 @@ private struct CalendarPickerSection: View {
     }
 
     private var emptyMessage: String {
-        if !query.isEmpty { return "No matches for “\(query)”." }
-        return store.access == .granted ? "No calendars on this Mac." : "Nothing to show yet."
+        if !query.isEmpty { return String(localized: "No matches for “\(query)”.") }
+        return store.access == .granted
+            ? String(localized: "No calendars on this Mac.") : String(localized: "Nothing to show yet.")
     }
 }
 

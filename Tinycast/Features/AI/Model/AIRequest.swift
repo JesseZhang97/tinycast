@@ -90,6 +90,9 @@ struct AIMessage: Equatable, Sendable {
 }
 
 struct AIRequest: Equatable, Sendable {
+    static let defaultMaxOutputTokens = 4_096
+
+    let conversationID: UUID?
     let instructions: String?
     let messages: [AIMessage]
     let maxOutputTokens: Int
@@ -99,9 +102,11 @@ struct AIRequest: Equatable, Sendable {
     let tools: [AITool]
 
     init(
-        instructions: String? = nil, messages: [AIMessage], maxOutputTokens: Int = 4_096,
-        webSearch: Bool = false, tools: [AITool] = []
+        instructions: String? = nil, messages: [AIMessage],
+        maxOutputTokens: Int = defaultMaxOutputTokens,
+        webSearch: Bool = false, tools: [AITool] = [], conversationID: UUID? = nil
     ) {
+        self.conversationID = conversationID
         self.instructions = instructions
         self.messages = messages
         self.maxOutputTokens = maxOutputTokens
@@ -113,7 +118,7 @@ struct AIRequest: Equatable, Sendable {
     func continuing(with messages: [AIMessage], tools: [AITool]) -> AIRequest {
         AIRequest(
             instructions: instructions, messages: messages, maxOutputTokens: maxOutputTokens,
-            webSearch: webSearch, tools: tools)
+            webSearch: webSearch, tools: tools, conversationID: conversationID)
     }
 }
 
@@ -163,7 +168,8 @@ enum AIProviderError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .unavailable(let message), .responseFailed(let message): return message
-        case .malformedResponse: return "The provider returned malformed streaming data."
+        case .malformedResponse:
+            return String(localized: "The provider returned malformed streaming data.")
         }
     }
 }

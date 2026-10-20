@@ -1,6 +1,5 @@
 import Foundation
 
-/// An installed extension: its manifest plus where it lives on disk.
 struct InstalledExtension: Sendable, Hashable, Identifiable {
     let manifest: ExtensionManifest
     let directory: URL
@@ -22,7 +21,6 @@ struct InstalledExtension: Sendable, Hashable, Identifiable {
 
     var assetsPath: String { directory.appendingPathComponent("assets").path }
 
-    /// The prebuilt CommonJS bundle for a command, or nil when the install is incomplete.
     func bundleURL(for command: ExtensionCommand) -> URL? {
         let url = directory.appendingPathComponent("\(command.name).js")
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
@@ -33,7 +31,6 @@ struct InstalledExtension: Sendable, Hashable, Identifiable {
     }
 }
 
-/// A specific command of a specific extension — what the launcher activates.
 struct ExtensionCommandRef: Sendable, Hashable {
     let extensionName: String
     let commandName: String
@@ -185,22 +182,30 @@ enum ExtensionCatalog {
         var errorDescription: String? {
             switch self {
             case .notAnExtension(let url):
-                return
-                    "\(url.lastPathComponent) doesn't contain a Raycast extension (no package.json with commands)."
+                return String(
+                    localized: """
+                        \(url.lastPathComponent) doesn't contain a Raycast extension (no package.json \
+                        with commands).
+                        """)
             case .noBuiltCommands(let name):
-                return
-                    "\(name) has no built command bundles. Tinycast installs prebuilt extensions — run `ray build` in the extension folder first, or import one from an installed Raycast."
+                return String(
+                    localized: """
+                        \(name) has no built command bundles. Tinycast installs prebuilt extensions — run \
+                        `ray build` in the extension folder first, or import one from an installed Raycast.
+                        """)
             case .wrongPlatform(let name):
-                return "\(name) doesn't support macOS."
+                return String(localized: "\(name) doesn't support macOS.")
             case .copyFailed(let reason):
-                return "Couldn't install the extension: \(reason)"
+                return String(localized: "Couldn't install the extension: \(reason)")
             }
         }
     }
 
-    /// Manifest, built commands and `assets/` only — never `node_modules` or `.js.map`s.
+    /// Manifest, built commands, `assets/` and any bundled `node_modules` — never `.js.map`s.
     @discardableResult
-    static func install(from source: URL) throws -> InstalledExtension {
+    static func install(
+        from source: URL, in directory: URL = ExtensionCatalog.extensionsDirectory()
+    ) throws -> InstalledExtension {
         guard let manifest = try? ExtensionManifest.load(directory: source) else {
             throw InstallError.notAnExtension(source)
         }
@@ -212,7 +217,7 @@ enum ExtensionCatalog {
         }
         guard !built.isEmpty else { throw InstallError.noBuiltCommands(manifest.title) }
 
-        let destination = extensionsDirectory().appendingPathComponent(
+        let destination = directory.appendingPathComponent(
             manifest.name.replacingOccurrences(of: "/", with: "-"), isDirectory: true)
         do {
             if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
@@ -229,6 +234,11 @@ enum ExtensionCatalog {
             let assets = source.appendingPathComponent("assets")
             if fm.fileExists(atPath: assets.path) {
                 try fm.copyItem(at: assets, to: destination.appendingPathComponent("assets"))
+            }
+            let nodeModules = source.appendingPathComponent("node_modules")
+            if fm.fileExists(atPath: nodeModules.path) {
+                try fm.copyItem(
+                    at: nodeModules, to: destination.appendingPathComponent("node_modules"))
             }
             try restoreExecutablePermissions(in: destination)
         } catch {

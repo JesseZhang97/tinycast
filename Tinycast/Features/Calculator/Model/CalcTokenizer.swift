@@ -43,7 +43,6 @@ enum CalcTokenizer {
                         text.unicodeScalars.append(c)
                     } else if c == "," && functionDepth == nil && i + 1 < chars.count && isDigit(chars[i + 1])
                     {
-                        // grouping separator between digits — skip
                     } else if c == "." && !seenDot {
                         seenDot = true
                         text.unicodeScalars.append(c)
@@ -134,7 +133,6 @@ enum CalcTokenizer {
                 continue
             }
 
-            // "**" is the Python/JS/shell spelling of power, same operator as "^".
             if ch == "*", i + 1 < chars.count, chars[i + 1] == "*" {
                 tokens.append(.op(.power))
                 i += 2
@@ -214,12 +212,11 @@ enum CalcTokenizer {
         guard index > 0, !chars[index - 1].isLetter, let previous, endsOperand(previous) else {
             return false
         }
-        if index + 2 < chars.count,
-            ["o", "O"].contains(chars[index + 1]),
-            ["r", "R"].contains(chars[index + 2]),
-            index + 3 == chars.count || !chars[index + 3].isLetter
-        {
-            return false
+        var end = index + 1
+        while end < chars.count, chars[end].isLetter { end += 1 }
+        if end > index + 1 {
+            let name = String(String.UnicodeScalarView(chars[index..<end])).lowercased()
+            if name == "xor" || CalcCurrency.byName[name] != nil { return false }
         }
         let attached = !chars[index - 1].isWhitespace
         var next = index + 1

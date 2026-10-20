@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 
-/// Maps a decrypted Raycast payload onto Tinycast's fields. See docs/features/raycast-import.md.
 enum RaycastImportReader {
     static func read(file: URL, passphrase: String) throws -> RaycastImport.Result {
         try map(RaycastDecoder.decrypt(try Data(contentsOf: file), passphrase: passphrase))
@@ -16,7 +15,9 @@ enum RaycastImportReader {
         backup.hotkeys = mapHotkeys(json)
         backup.favoriteApps = mapFavorites(json)
         backup.launcherAliases = mapAliases(json)
-        let (clipboard, missing) = mapClipboard(json)
+        let (clipboard, missing) = RaycastClipboardImport.parse(
+            json["clipboardHistory"], now: Date.init,
+            fileExists: { FileManager.default.fileExists(atPath: $0) })
         let snippets = RaycastSnippetImport.parse(
             (json["snippets"] as? [String: Any])?["snippets"])
         let quicklinks = RaycastQuicklinkImport.parse(json["quicklinks"])
@@ -81,7 +82,6 @@ enum RaycastImportReader {
         return mapped ? data : nil
     }
 
-    /// Every Raycast hotkey, in one shape. See docs/features/raycast-import.md.
     private static func mapHotkeys(_ json: [String: Any]) -> SettingsBackup.HotkeyBackup? {
         let settings = json["settings"] as? [String: Any]
         var hotkeys = SettingsBackup.HotkeyBackup()
@@ -196,58 +196,8 @@ enum RaycastImportReader {
         return EmojiSkinTone(rawValue: raw)?.rawValue
     }
 
-    // MARK: - Clipboard
-
-    private static func mapClipboard(_ json: [String: Any]) -> (items: [ClipboardItem], missing: Int) {
-        guard
-            let entries = (json["clipboardHistory"] as? [String: Any])?["clipboardEntries"]
-                as? [[String: Any]]
-        else { return ([], 0) }
-
-        let dateParser = ISO8601DateFormatter()
-        dateParser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        var items: [ClipboardItem] = []
-        var missing = 0
-        for entry in entries {
-            let createdAt = parseDate(entry["createdAt"] as? String, using: dateParser) ?? Date()
-            let reps = (entry["items"] as? [[String: Any]] ?? [])
-                .flatMap { ($0["representations"] as? [[String: Any]]) ?? [] }
-
-            if let text = reps.first(where: {
-                ($0["mimeType"] as? String)?.hasPrefix("text/plain") == true
-            })?["content"] as? String, !text.isEmpty {
-                items.append(
-                    ClipboardItem(
-                        id: UUID(), kind: .text, text: text, imagePath: nil, createdAt: createdAt,
-                        sourceBundleID: nil))
-                continue
-            }
-
-            if let path = reps.first(where: {
-                ($0["mimeType"] as? String)?.hasPrefix("image/") == true
-                    && ($0["contentType"] as? String) == "url"
-            })?["content"] as? String {
-                guard FileManager.default.fileExists(atPath: path) else {
-                    missing += 1
-                    continue
-                }
-                items.append(
-                    ClipboardItem(imagePath: path, createdAt: createdAt, sourceBundleID: nil))
-            }
-        }
-        return (items, missing)
-    }
-
     // MARK: - Helpers
 
-    private static func parseDate(_ string: String?, using parser: ISO8601DateFormatter) -> Date? {
-        guard let string else { return nil }
-        // Fractional-seconds parser first; fall back to a whole-second timestamp.
-        return parser.date(from: string) ?? ISO8601DateFormatter().date(from: string)
-    }
-
-    /// First value stored under `key` anywhere in a nested JSON object/array tree.
     private static func firstValue(forKey key: String, in object: Any) -> Any? {
         if let dict = object as? [String: Any] {
             if let hit = dict[key] { return hit }

@@ -40,13 +40,22 @@ enum AIModelDiscovery {
         var errorDescription: String? {
             switch self {
             case .malformedResponse:
-                return "The provider returned an unreadable model list. Enter a model ID manually."
+                return String(
+                    localized: """
+                        The provider returned an unreadable model list. Enter a model ID manually.
+                        """)
             case .rejectedKey:
-                return "The API key was rejected. Check it and try again."
+                return String(localized: "The API key was rejected. Check it and try again.")
             case .unavailable:
-                return "The provider could not load models right now. Try again or enter one manually."
+                return String(
+                    localized: """
+                        The provider could not load models right now. Try again or enter one manually.
+                        """)
             case .unsupported:
-                return "This endpoint does not expose a model list. Enter a model ID manually."
+                return String(
+                    localized: """
+                        This endpoint does not expose a model list. Enter a model ID manually.
+                        """)
             }
         }
     }
@@ -127,6 +136,14 @@ enum AIModelDiscovery {
             }
             .prefix(limit)
             .map(\.element)
+    }
+
+    static func exactMatch(_ models: [Model], query: String) -> Model? {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nil }
+        // An ID outranks a display name, as in search, so Return adds the top row.
+        return models.first { $0.id.caseInsensitiveCompare(query) == .orderedSame }
+            ?? models.first { $0.name.caseInsensitiveCompare(query) == .orderedSame }
     }
 
     private static func catalogURL(
@@ -218,6 +235,16 @@ enum AIModelDiscovery {
             enum CodingKeys: String, CodingKey {
                 case id, name, architecture, reasoning
                 case displayName = "display_name"
+            }
+
+            // A shape we cannot read is dropped, never the entry.
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                id = try container.decode(String.self, forKey: .id)
+                name = try? container.decodeIfPresent(String.self, forKey: .name)
+                displayName = try? container.decodeIfPresent(String.self, forKey: .displayName)
+                architecture = try? container.decodeIfPresent(Architecture.self, forKey: .architecture)
+                reasoning = try? container.decodeIfPresent(Reasoning.self, forKey: .reasoning)
             }
         }
 

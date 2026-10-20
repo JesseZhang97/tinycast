@@ -4,14 +4,15 @@ import Foundation
 @MainActor
 @Observable
 final class AliasStore {
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let defaultsKey = "launcherAliases"
 
     private(set) var aliases: [String: String]
     /// AppIndex includes this in its result key, invalidating a ranking when an alias changes.
     private(set) var revision = 0
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         aliases = defaults.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
     }
 
@@ -34,7 +35,6 @@ final class AliasStore {
         defaults.set(aliases, forKey: defaultsKey)
     }
 
-    /// Replace the whole table at once (used when importing a settings backup).
     func replace(_ new: [String: String]) {
         // An import obeys the same rule as typing: blank means none, or it lands unclearable.
         aliases = new.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

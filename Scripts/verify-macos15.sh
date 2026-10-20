@@ -37,7 +37,17 @@ plist_min="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Co
 [ "$plist_min" = "15.0" ] || { echo "expected LSMinimumSystemVersion 15.0, got $plist_min"; exit 1; }
 
 main_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
-binaries=("$app/Contents/MacOS/$main_name" "$app/Contents/Helpers/ClipboardTextHelper")
+if [ "$configuration" = Debug ]; then
+  dictation_name="Tinycast Dev Dictation"
+else
+  dictation_name="Tinycast Dictation"
+fi
+binaries=(
+  "$app/Contents/MacOS/$main_name"
+  "$app/Contents/Helpers/ClipboardTextHelper"
+  "$app/Contents/Helpers/FileIndexHelper"
+  "$app/Contents/Helpers/$dictation_name.app/Contents/MacOS/$dictation_name"
+)
 for binary in "${binaries[@]}"; do
   slices="$(lipo -archs "$binary")"
   for architecture in $architectures; do

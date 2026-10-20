@@ -12,6 +12,8 @@ final class ExtensionNodeShims: @unchecked Sendable {
     private static let openableFlags =
         O_RDONLY | O_WRONLY | O_RDWR | O_APPEND | O_CREAT | O_TRUNC | O_EXCL | O_NOFOLLOW
     private static let openFileLimit = 256
+    /// Non-blocking, so probing a FIFO for its errno cannot hang the JS queue waiting on a writer.
+    private static let probeFlags = O_RDONLY | O_NONBLOCK | O_CLOEXEC
 
     func closeFiles() {
         for handle in fileHandles.values { try? handle.close() }
@@ -157,7 +159,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "readFile":
             let target = try path(0)
             guard let data = fileManager.contents(atPath: target) else {
-                throw ShimError.noEntry(target, "open")
+                throw readError("open", target)
             }
             return data.base64EncodedString()
 
@@ -182,7 +184,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
             let offset = max(0, (arguments[safe: 1] as? NSNumber)?.intValue ?? 0)
             let count = max(0, (arguments[safe: 2] as? NSNumber)?.intValue ?? 0)
             guard let handle = FileHandle(forReadingAtPath: target) else {
-                throw ShimError.noEntry(target, "open")
+                throw readError("open", target)
             }
             defer { try? handle.close() }
             try handle.seek(toOffset: UInt64(offset))
@@ -199,7 +201,7 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "readdir":
             let target = try path(0)
             guard let names = try? fileManager.contentsOfDirectory(atPath: target) else {
-                throw ShimError.noEntry(target, "scandir")
+                throw readError("scandir", target)
             }
             return names.map { name -> [String: Any] in
                 let child = (target as NSString).appendingPathComponent(name)
@@ -218,9 +220,29 @@ final class ExtensionNodeShims: @unchecked Sendable {
         case "mkdir":
             let target = try path(0)
             let recursive = arguments[safe: 1] as? Bool ?? false
-            try fileManager.createDirectory(
-                atPath: target, withIntermediateDirectories: recursive)
-            return recursive ? target : nil
+            if recursive {
+                try fileManager.createDirectory(atPath: target, withIntermediateDirectories: true)
+                return target
+            }
+            guard Darwin.mkdir(target, 0o777) == 0 else { throw fileError("mkdir", target) }
+            return nil
+
+        case "utimes":
+            let target = try path(0)
+            let times = try (1...2).map { index -> timeval in
+                guard let seconds = (arguments[safe: index] as? NSNumber)?.doubleValue,
+                    seconds >= Double(Int.min), seconds < Double(Int.max)
+                else { throw ShimError.failed("fs.utimes needs valid timestamps.", "EINVAL") }
+                let wholeSeconds = seconds.rounded(.down)
+                let microseconds = Int(((seconds - wholeSeconds) * 1_000_000).rounded())
+                return timeval(
+                    tv_sec: Int(wholeSeconds) + microseconds / 1_000_000,
+                    tv_usec: Int32(microseconds % 1_000_000))
+            }
+            guard times.withUnsafeBufferPointer({ Darwin.utimes(target, $0.baseAddress) }) == 0 else {
+                throw fileError("utimes", target)
+            }
+            return nil
 
         case "remove":
             let target = try path(0)
@@ -338,6 +360,34 @@ final class ExtensionNodeShims: @unchecked Sendable {
             "\(name): \(String(cString: strerror(code))), \(syscall)\(target)", name)
     }
 
+    /// A nil FileManager read hides the errno, so reprobe the path and report it in Node's wording.
+    private func readError(_ syscall: String, _ path: String) -> ShimError {
+        let descriptor = Darwin.open(path, Self.probeFlags)
+        guard descriptor >= 0 else { return pathError(syscall, path) }
+        defer { Darwin.close(descriptor) }
+        var status = Darwin.stat()
+        let isDirectory =
+            Darwin.fstat(descriptor, &status) == 0 && status.st_mode & S_IFMT == S_IFDIR
+        if syscall == "scandir", !isDirectory {
+            return .failed("ENOTDIR: not a directory, \(syscall) '\(path)'", "ENOTDIR")
+        }
+        if syscall == "open", isDirectory {
+            return .failed(
+                "EISDIR: illegal operation on a directory, \(syscall) '\(path)'", "EISDIR")
+        }
+        return .noEntry(path, syscall)
+    }
+
+    private func pathError(_ syscall: String, _ path: String) -> ShimError {
+        switch errno {
+        case ENOENT: .noEntry(path, syscall)
+        case EPERM: .failed("EPERM: operation not permitted, \(syscall) '\(path)'", "EPERM")
+        case EACCES: .failed("EACCES: permission denied, \(syscall) '\(path)'", "EACCES")
+        case ENOTDIR: .failed("ENOTDIR: not a directory, \(syscall) '\(path)'", "ENOTDIR")
+        default: fileError(syscall, path)
+        }
+    }
+
     private static let errorNames: [Int32: String] = [
         EACCES: "EACCES", EBADF: "EBADF", EEXIST: "EEXIST", EISDIR: "EISDIR", EMFILE: "EMFILE",
         EINVAL: "EINVAL", ENOENT: "ENOENT", ENOSPC: "ENOSPC", ENOTDIR: "ENOTDIR", EPERM: "EPERM",
@@ -345,27 +395,24 @@ final class ExtensionNodeShims: @unchecked Sendable {
     ]
 
     private func stat(path: String, followLinks: Bool) throws -> [String: Any] {
-        let attributes =
-            followLinks
-            ? try? fileManager.attributesOfItem(
-                atPath: URL(fileURLWithPath: path).resolvingSymlinksInPath().path)
-            : try? fileManager.attributesOfItem(atPath: path)
-        guard let attributes else { throw ShimError.noEntry(path, "stat") }
+        var status = Darwin.stat()
+        let flags = followLinks ? 0 : AT_SYMLINK_NOFOLLOW
+        guard fstatat(AT_FDCWD, path, &status, flags) == 0 else { throw pathError("stat", path) }
 
-        let type = attributes[.type] as? FileAttributeType
-        func milliseconds(_ key: FileAttributeKey) -> Double {
-            ((attributes[key] as? Date)?.timeIntervalSince1970 ?? 0) * 1000
+        let type = status.st_mode & S_IFMT
+        func milliseconds(_ time: timespec) -> Double {
+            Double(time.tv_sec) * 1000 + Double(time.tv_nsec) / 1_000_000
         }
         return [
-            "size": (attributes[.size] as? NSNumber)?.doubleValue ?? 0,
-            "mode": (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0,
-            "mtimeMs": milliseconds(.modificationDate),
-            "atimeMs": milliseconds(.modificationDate),
-            "ctimeMs": milliseconds(.creationDate),
-            "birthtimeMs": milliseconds(.creationDate),
-            "_isFile": type == .typeRegular,
-            "_isDirectory": type == .typeDirectory,
-            "_isSymbolicLink": type == .typeSymbolicLink
+            "size": Double(status.st_size),
+            "mode": Int(status.st_mode),
+            "mtimeMs": milliseconds(status.st_mtimespec),
+            "atimeMs": milliseconds(status.st_atimespec),
+            "ctimeMs": milliseconds(status.st_ctimespec),
+            "birthtimeMs": milliseconds(status.st_birthtimespec),
+            "_isFile": type == S_IFREG,
+            "_isDirectory": type == S_IFDIR,
+            "_isSymbolicLink": type == S_IFLNK
         ]
     }
 

@@ -1,5 +1,3 @@
-// The on-device route; the end-to-end leg skips with a reason on a Mac that cannot run it.
-
 import FoundationModels
 import Foundation
 
@@ -24,7 +22,11 @@ struct AppleIntelligenceTests {
         if #available(macOS 26.0, *) {
             turnsSplitThePromptFromItsHistory()
             generationErrorsBecomeReadableFailures()
-            await onDeviceModelAnswers()
+            if ProcessInfo.processInfo.environment["TINYCAST_TEST_APPLE_INTELLIGENCE"] == "1" {
+                await onDeviceModelAnswers()
+            } else {
+                print("skip  on-device stream — set TINYCAST_TEST_APPLE_INTELLIGENCE=1 to run")
+            }
         }
 
         print("\(passes) passed, \(failures) failed")

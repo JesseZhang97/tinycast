@@ -20,12 +20,12 @@ struct AIChatSidebarView: View {
 
     /// Recency order already groups each day together, so a bucket only ever opens once.
     private var sections: [ChatSection] {
-        let results = history.search(query)
         var sections: [ChatSection] = []
-        let pinned = results.filter(\.isPinned)
-        if !pinned.isEmpty { sections.append(ChatSection(title: "Pinned", conversations: pinned)) }
-        for conversation in results where !conversation.isPinned {
-            let title = DateBucket(for: conversation.updatedAt).title
+        for conversation in history.search(query).pinnedFirst {
+            let title =
+                conversation.isPinned
+                ? String(localized: "ai-pinned-conversations", defaultValue: "Pinned")
+                : DateBucket(for: conversation.updatedAt).title
             if sections.last?.title == title {
                 sections[sections.count - 1].conversations.append(conversation)
             } else {
@@ -44,7 +44,13 @@ struct AIChatSidebarView: View {
         }
         // The field sits under the toolbar's material, so it needs its own clearance from the top.
         .padding(.top, Theme.Spacing.md)
-        .onExitCommand { query = "" }
+        .onExitCommand {
+            if query.isEmpty {
+                _ = coordinator.closeWindowIfKey()
+            } else {
+                query = ""
+            }
+        }
     }
 
     @ViewBuilder private var list: some View {
@@ -58,10 +64,13 @@ struct AIChatSidebarView: View {
                 ForEach(sections) { section in
                     Section(section.title) {
                         ForEach(section.conversations) { conversation in
-                            row(
-                                conversation, isAnswering: answering.contains(conversation.id),
+                            ChatSidebarRow(
+                                conversation: conversation,
+                                isAnswering: answering.contains(conversation.id),
                                 isSelected: conversation.id == openID
-                            )
+                            ) {
+                                title(of: conversation)
+                            }
                             .tag(conversation.id)
                         }
                     }
@@ -95,9 +104,7 @@ struct AIChatSidebarView: View {
         }
     }
 
-    @ViewBuilder private func row(
-        _ conversation: ChatConversation, isAnswering: Bool, isSelected: Bool
-    ) -> some View {
+    @ViewBuilder private func title(of conversation: ChatConversation) -> some View {
         if renaming == conversation.id {
             TextField("Chat name", text: $renameText, prompt: Text(conversation.title))
                 .textFieldStyle(.plain)
@@ -108,8 +115,9 @@ struct AIChatSidebarView: View {
                     if !focused { commitRename(conversation.id) }
                 }
         } else {
-            ChatSidebarRow(
-                conversation: conversation, isAnswering: isAnswering, isSelected: isSelected)
+            Text(conversation.displayTitle)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 
@@ -160,18 +168,16 @@ struct AIChatSidebarView: View {
 
 }
 
-/// A chat's title, then a spinner while it answers or a pin; hover is a fainter selection.
-private struct ChatSidebarRow: View {
+private struct ChatSidebarRow<Title: View>: View {
     let conversation: ChatConversation
     let isAnswering: Bool
     let isSelected: Bool
+    @ViewBuilder let title: Title
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: Theme.Spacing.sm) {
-            Text(conversation.displayTitle)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            title
             Spacer(minLength: 0)
             if isAnswering {
                 ProgressView()
