@@ -113,18 +113,20 @@ struct FormTextArea: NSViewRepresentable {
 
         override var undoManager: UndoManager? { editingUndoManager }
 
-        /// Sequoia leaves the typing group open, so undo() never sees a nested registerUndo.
+        /// Sequoia keeps the typing group open; a nested registerUndo is invisible to undo().
         func replaceBoundText(_ newValue: String) {
             let old = string
             guard old != newValue else { return }
             breakUndoCoalescing()
             editingUndoManager.disableUndoRegistration()
-            string = newValue
+            if let storage = textStorage {
+                storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newValue)
+            } else {
+                string = newValue
+            }
             didChangeText()
             editingUndoManager.enableUndoRegistration()
-            while editingUndoManager.groupingLevel > 0 {
-                editingUndoManager.endUndoGrouping()
-            }
+            editingUndoManager.removeAllActions()
             editingUndoManager.registerUndo(withTarget: self) { $0.replaceBoundText(old) }
         }
 
