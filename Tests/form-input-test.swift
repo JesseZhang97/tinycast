@@ -15,6 +15,7 @@ struct FormInputTests {
 
     static func main() {
         _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         testSingleLine()
         testCapAlignment()
         testTextArea()
@@ -29,6 +30,7 @@ struct FormInputTests {
             contentRect: NSRect(x: 0, y: 0, width: 300, height: height),
             styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = content
         content.layoutSubtreeIfNeeded()
         return window

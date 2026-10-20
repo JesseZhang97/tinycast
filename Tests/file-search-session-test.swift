@@ -181,7 +181,11 @@ struct FileSearchSessionTests {
         session.search("report")
         await waitUntil { session.state == .ready }
         session.refreshRecent()
-        try? await Task.sleep(for: .milliseconds(150))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while ContinuousClock.now < deadline {
+            if await probe.snapshot().calls.contains("") { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
         expect(session.results.first?.name == "report", "a Recent refresh leaves the open list alone")
         session.cancel()
         session.search("")
