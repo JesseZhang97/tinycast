@@ -35,6 +35,12 @@ final class ClipboardTextIndexer {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null) >= idleWindow
     }
 
+    /// macOS 15 starves `.background` MainActor work under load; idle is enforced by `canRun`.
+    private static var schedulePriority: TaskPriority {
+        if #available(macOS 26.0, *) { return .background }
+        return .medium
+    }
+
     func start() {
         isEnabled = true
         schedule()
@@ -57,7 +63,8 @@ final class ClipboardTextIndexer {
         }
         guard task == nil else { return }
         let delay = delay
-        task = Task(priority: .background) { [weak self] in
+        let priority = Self.schedulePriority
+        task = Task(priority: priority) { [weak self] in
             defer {
                 self?.task = nil
                 self?.waitingForRetry = false
@@ -81,7 +88,7 @@ final class ClipboardTextIndexer {
                 }
                 let generation = self.store.extractionGeneration
                 let extract = self.extract
-                let worker = Task.detached(priority: .background) { try await extract(item) }
+                let worker = Task.detached(priority: priority) { try await extract(item) }
                 do {
                     let text = try await withTaskCancellationHandler {
                         try await worker.value

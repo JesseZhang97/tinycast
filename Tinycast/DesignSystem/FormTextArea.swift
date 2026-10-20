@@ -66,18 +66,18 @@ struct FormTextArea: NSViewRepresentable {
         if view.minSize != minSize { view.minSize = minSize }
         view.setAccessibilityLabel(label)
         if view.string != text {
-            if let storage = view.textStorage {
-                let range = NSRange(location: 0, length: storage.length)
-                view.breakUndoCoalescing()
-                // macOS 15 coalesces this replacement into the previous typing undo group.
-                let isolateUndoGroup = if #available(macOS 26.0, *) { false } else { true }
-                if isolateUndoGroup { view.undoManager?.beginUndoGrouping() }
-                if view.shouldChangeText(in: range, replacementString: text) {
-                    storage.replaceCharacters(in: range, with: text)
-                    view.didChangeText()
+            if #available(macOS 26.0, *) {
+                if let storage = view.textStorage {
+                    let range = NSRange(location: 0, length: storage.length)
+                    view.breakUndoCoalescing()
+                    if view.shouldChangeText(in: range, replacementString: text) {
+                        storage.replaceCharacters(in: range, with: text)
+                        view.didChangeText()
+                    }
+                    view.breakUndoCoalescing()
                 }
-                if isolateUndoGroup { view.undoManager?.endUndoGrouping() }
-                view.breakUndoCoalescing()
+            } else {
+                view.replaceBoundText(text)
             }
             if let selection, case .selection(let range) = selection.indices {
                 view.setSelectedRange(NSRange(range, in: text))
@@ -111,6 +111,15 @@ struct FormTextArea: NSViewRepresentable {
         private let editingUndoManager = UndoManager()
 
         override var undoManager: UndoManager? { editingUndoManager }
+
+        /// Sequoia's didChangeText path coalesces into the previous typing group, or the window manager.
+        func replaceBoundText(_ newValue: String) {
+            let old = string
+            guard old != newValue else { return }
+            undoManager?.registerUndo(withTarget: self) { $0.replaceBoundText(old) }
+            string = newValue
+            didChangeText()
+        }
 
         // The non-activating panel cannot rely on the frontmost app's Undo menu.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
