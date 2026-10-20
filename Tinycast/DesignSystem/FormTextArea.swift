@@ -66,7 +66,8 @@ struct FormTextArea: NSViewRepresentable {
         if view.minSize != minSize { view.minSize = minSize }
         view.setAccessibilityLabel(label)
         if view.string != text {
-            if #available(macOS 26.0, *) {
+            // Harnesses compile at the 26 SDK floor, so #available(26) is folded away.
+            if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 {
                 if let storage = view.textStorage {
                     let range = NSRange(location: 0, length: storage.length)
                     view.breakUndoCoalescing()

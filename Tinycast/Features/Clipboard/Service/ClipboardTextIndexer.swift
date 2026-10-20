@@ -37,8 +37,8 @@ final class ClipboardTextIndexer {
 
     /// macOS 15 starves `.background` MainActor work under load; idle is enforced by `canRun`.
     private static var schedulePriority: TaskPriority {
-        if #available(macOS 26.0, *) { return .background }
-        return .medium
+        // Harnesses compile at the 26 SDK floor, so #available(26) is folded away.
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? .background : .medium
     }
 
     func start() {

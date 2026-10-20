@@ -57,4 +57,6 @@ Before tagging, run the full harnesses, lint and universal Release verification:
 The verifier asserts the app and its embedded helpers declare a 15.0 floor and that macOS 26-only
 symbols remain weak imports. The GitHub Actions workflow runs the same checks on `macos-26`, builds
 an unsigned universal DMG artifact, and also builds, tests and smoke-launches the app on a real
-`macos-15` runner so a missing weak import cannot hide behind the 26 SDK.
+`macos-15` runner so a missing weak import cannot hide behind the 26 SDK. Standalone harnesses
+compile at the 26 SDK floor, so `#available(macOS 26.0, *)` is folded true there; a runtime seam
+those harnesses exercise must use `ProcessInfo` (or an equivalent check the compiler cannot drop).
