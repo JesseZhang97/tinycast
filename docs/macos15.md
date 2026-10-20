@@ -30,7 +30,8 @@ availability error usually means upstream adopted another macOS 26 API. Put its 
   `frostedPanel` / `glassButtonStyle()`, never a raw `.glassEffect` or `.buttonStyle(.glass)`.
 - Apple Intelligence uses Foundation Models and remains available only on macOS 26. Other configured
   AI providers continue to work on macOS 15. Status goes through `AIProviderFactory.appleIntelligenceStatus()`,
-  which reports `.unsupportedOS` below macOS 26.
+  which reports `.unsupportedOS` below macOS 26. Type checks go through
+  `AIProviderFactory.isAppleIntelligence(_:)`, which is false below macOS 26.
 - Apple's directly constructed translation session is macOS 26-only. Translate reports that limitation
   on macOS 15 rather than crashing or preventing the rest of Quick Actions from working.
 - Typed `NotificationCenter` observers (`addObserver(of:for:)`, `DidTerminateApplicationMessage`)

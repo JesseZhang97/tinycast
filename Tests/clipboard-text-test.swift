@@ -297,13 +297,15 @@ struct ClipboardTextTests {
         store.close()
     }
 
-    static func waitUntil(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
-        while ContinuousClock.now < deadline {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        expect(false, "scheduler completed before timeout")
+    static func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+        try await Task.detached {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while ContinuousClock.now < deadline {
+                if await condition() { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            await MainActor.run { expect(false, "scheduler completed before timeout") }
+        }.value
     }
 
     static func makeImage() -> CGImage {

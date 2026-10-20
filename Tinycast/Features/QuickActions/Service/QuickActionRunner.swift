@@ -67,7 +67,9 @@ final class QuickActionRunner {
     private static func maxOutputTokens(
         for action: QuickAction, selection: String, on provider: any AIProvider
     ) -> Int {
-        guard provider is AppleIntelligenceProvider else { return AIRequest.defaultMaxOutputTokens }
+        guard AIProviderFactory.isAppleIntelligence(provider) else {
+            return AIRequest.defaultMaxOutputTokens
+        }
         let approximateTokens = max(selection.count / 3, 64)
         return action == .summarize ? min(approximateTokens, 512) : approximateTokens * 2
     }

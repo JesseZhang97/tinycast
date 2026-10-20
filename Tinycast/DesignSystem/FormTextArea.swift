@@ -69,10 +69,14 @@ struct FormTextArea: NSViewRepresentable {
             if let storage = view.textStorage {
                 let range = NSRange(location: 0, length: storage.length)
                 view.breakUndoCoalescing()
+                // macOS 15 coalesces this replacement into the previous typing undo group.
+                let isolateUndoGroup = if #available(macOS 26.0, *) { false } else { true }
+                if isolateUndoGroup { view.undoManager?.beginUndoGrouping() }
                 if view.shouldChangeText(in: range, replacementString: text) {
                     storage.replaceCharacters(in: range, with: text)
                     view.didChangeText()
                 }
+                if isolateUndoGroup { view.undoManager?.endUndoGrouping() }
                 view.breakUndoCoalescing()
             }
             if let selection, case .selection(let range) = selection.indices {

@@ -13,6 +13,13 @@ struct FormInputTests {
         }
     }
 
+    static func waitUntil(_ condition: () -> Bool) {
+        let deadline = Date(timeIntervalSinceNow: 2)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+    }
+
     static func main() {
         _ = NSApplication.shared
         NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -62,10 +69,11 @@ struct FormInputTests {
         expect(
             [alignment.top, alignment.bottom, alignment.left, alignment.right].allSatisfy { $0 == 0 },
             "the native field does not outgrow its chrome")
+        waitUntil { !inkBounds(hosting).isNull }
         let restingInk = inkBounds(hosting)
         expect(!restingInk.isNull, "the placeholder rendering test captures visible text")
         window.makeFirstResponder(input)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.currentEditor() != nil }
         expect(inkBounds(hosting) == restingInk, "focusing never moves the rendered placeholder")
         expect(draft.focused, "taking first responder updates focus before typing")
         guard let editor = input.currentEditor() as? NSTextView else {
@@ -95,11 +103,11 @@ struct FormInputTests {
         _ = delegate.control?(input, textView: editor, doCommandBy: #selector(NSResponder.insertBacktab(_:)))
         expect(backwards == true, "Shift-Tab reverses focus")
         window.makeFirstResponder(nil)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { !draft.focused && inkBounds(hosting) == restingInk }
         expect(inkBounds(hosting) == restingInk, "leaving the field never moves the rendered placeholder")
         expect(!draft.focused, "leaving the field clears focus")
         draft.name = "Placeholder"
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { abs(inkBounds(hosting).minY - restingInk.minY) <= 1 }
         expect(
             abs(inkBounds(hosting).minY - restingInk.minY) <= 1,
             "text and placeholder share the same rendered baseline")
@@ -117,13 +125,14 @@ struct FormInputTests {
             let window = window(content: hosting, height: height)
             let image = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)!
             let pixelsPerPoint = CGFloat(image.pixelsHigh) / height
+            waitUntil { !inkBounds(hosting).isNull }
             let restingInk = inkBounds(hosting)
             let input = find(FormTextInput.InputView.self, in: hosting)!
             expect(
                 abs(restingInk.midY / pixelsPerPoint - height / 2) <= 0.5,
                 "capitals are vertically centered at scale \(scale)")
             window.makeFirstResponder(input)
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            waitUntil { input.currentEditor() != nil }
             guard let editor = input.currentEditor() as? NSTextView else {
                 expect(false, "cap-height test receives a native field editor")
                 window.close()
@@ -184,7 +193,7 @@ struct FormInputTests {
         input.insertText("Undo check", replacementRange: NSRange(location: 0, length: 0))
         let previous = input.string
         draft.text = String(repeating: "A long line to wrap in the editor.\n", count: 40)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.string == draft.text && input.undoManager?.canUndo == true }
         hosting.layoutSubtreeIfNeeded()
         expect(
             find(FormTextArea.InputView.self, in: hosting) === input,
@@ -196,7 +205,7 @@ struct FormInputTests {
             windowNumber: window.windowNumber, context: nil, characters: "z",
             charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!
         expect(input.performKeyEquivalent(with: undo), "the focused textarea handles Command-Z")
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.string == previous && draft.text == previous }
         expect(input.string == previous, "undo restores the content before programmatic insertion")
         expect(draft.text == previous, "native undo reaches the binding")
         let redo = NSEvent.keyEvent(
@@ -204,28 +213,28 @@ struct FormInputTests {
             windowNumber: window.windowNumber, context: nil, characters: "Z",
             charactersIgnoringModifiers: "Z", isARepeat: false, keyCode: 6)!
         expect(input.performKeyEquivalent(with: redo), "the focused textarea handles Command-Shift-Z")
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { draft.text == input.string && draft.text != previous }
         expect(draft.text == input.string && draft.text != previous, "native redo reaches the binding")
         input.undoManager?.undo()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.string == previous && draft.text == previous }
         window.makeFirstResponder(nil)
         draft.text += "{date}"
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.string == draft.text && input.string.hasSuffix("{date}") }
         input.undoManager?.undo()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { draft.text == previous }
         expect(draft.text == previous, "placeholder insertion remains undoable after a menu takes focus")
         let value = "Avant 👋{date} après"
         let caret = value.index(value.startIndex, offsetBy: 13)
         draft.text = value
         draft.selection = TextSelection(range: caret..<caret)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { input.string == value && input.selectedRange() == NSRange(caret..<caret, in: value) }
         hosting.layoutSubtreeIfNeeded()
         expect(
             input.selectedRange() == NSRange(caret..<caret, in: value),
             "programmatic insertion restores the Unicode caret, not the end of the textarea")
         expect(hosting.fittingSize.height <= height, "deletion shrinks the textarea to its minimum")
         input.undoManager?.redo()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        waitUntil { draft.text == input.string }
         expect(draft.text == input.string, "native redo stays synchronized with the binding")
     }
 

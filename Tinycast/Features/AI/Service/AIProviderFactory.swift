@@ -93,4 +93,9 @@ enum AIProviderFactory {
         guard #available(macOS 26.0, *) else { return .unsupportedOS }
         return AppleIntelligenceProvider.status()
     }
+
+    static func isAppleIntelligence(_ provider: any AIProvider) -> Bool {
+        guard #available(macOS 26.0, *) else { return false }
+        return provider is AppleIntelligenceProvider
+    }
 }
