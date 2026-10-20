@@ -189,6 +189,7 @@ struct FileSearchSessionTests {
         expect(session.results.first?.name == "report", "a Recent refresh leaves the open list alone")
         session.cancel()
         session.search("")
+        await waitUntil { !session.results.isEmpty }
         expect(!session.results.isEmpty, "the next blank screen opens on the refreshed rows")
     }
 

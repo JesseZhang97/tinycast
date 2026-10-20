@@ -26,8 +26,10 @@ jobs:
       - name: Verify universal macOS 15 build
         run: ./Scripts/verify-macos15.sh
       - name: Build unsigned universal DMG
+        if: success() || failure()
         run: ./Scripts/build-dmg.sh --unsigned
       - uses: actions/upload-artifact@v7
+        if: success() || failure()
         with:
           name: Tinycast-macos15-unsigned
           path: build/Tinycast-*.dmg
@@ -36,6 +38,7 @@ jobs:
   macos15:
     runs-on: macos-15
     needs: verify
+    if: success() || failure()
     steps:
       - uses: actions/checkout@v7
       - name: Show runner OS
