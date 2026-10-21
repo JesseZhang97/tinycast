@@ -291,7 +291,7 @@ struct AIProvidersPanel: View {
                 Text(
                     available
                         ? String(localized: "Runs on this Mac. Nothing leaves it.")
-                        : AppleIntelligenceProvider.status().message
+                        : AIProviderFactory.appleIntelligenceStatus().message
                             ?? String(localized: "Not available on this Mac."))
             }
         } header: {

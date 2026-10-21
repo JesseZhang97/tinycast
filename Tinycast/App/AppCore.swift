@@ -72,7 +72,7 @@ final class AppCore {
     let aiChats: AIChatSurfacesState
     let aiSettings = AISettingsStore(
         environmentStore: .keychain,
-        isAppleIntelligenceAvailable: { AppleIntelligenceProvider.status().isAvailable })
+        isAppleIntelligenceAvailable: { AIProviderFactory.appleIntelligenceStatus().isAvailable })
     let mcpSettings = MCPSettingsStore()
     let mcpOAuth = MCPOAuthManager()
     @ObservationIgnored private(set) lazy var mcp = MCPServerManager(oauth: mcpOAuth)
