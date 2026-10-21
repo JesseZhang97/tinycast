@@ -1,5 +1,11 @@
 # Tinycast
 
+## macOS 15 compatibility branch
+
+This branch is the explicit exception to the latest-only policy below. Keep `main` aligned with
+upstream and put every macOS 15 fallback here, behind a macOS 26 availability boundary. Read
+[`docs/macos15.md`](docs/macos15.md) before syncing upstream or changing a compatibility seam.
+
 A native macOS menu-bar launcher: fuzzy app launcher, global and per-app hotkeys, a text/image
 clipboard history, an inline calculator, a floating note, snippets, quicklinks, window management
 and an emoji picker. It also **runs Raycast extensions** natively, in JavaScriptCore.

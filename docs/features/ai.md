@@ -144,6 +144,8 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   holds a prompt and its reply together. Availability is asked for each time, never cached at launch:
   the model finishes downloading mid-session, and reading it inside a view body leaves SwiftUI
   observing the framework's own state.
+- **Apple Intelligence requires macOS 26.** Foundation Models does not exist on macOS 15, so the
+  compatibility branch reports that requirement while leaving installed and API providers available.
 - **An unavailable on-device model is reported, never rerouted.** Fall-forward exists for a route the
   reader *removed*; a Mac with Apple Intelligence switched off keeps its stored selection and is told
   why, because silently moving someone from a free, private, local model onto a billed endpoint is
