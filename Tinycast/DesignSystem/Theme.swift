@@ -431,6 +431,8 @@ enum Theme {
         /// The Settings card: a faint surface whose border doubles as the row divider.
         static let cardFill = ramp(dark: 0.05, light: 0.04)
         static let cardStroke = ramp(dark: 0.10, light: 0.10)
+        /// White in both: the frost brightens glass, and light glass needs more to read at all.
+        static let glassFrost = adaptive(dark: .srgbInk(1, alpha: 0.05), light: .srgbInk(1, alpha: 0.25))
         /// A window on the preview's plate. White in both, since the plate is always dark.
         static let layoutPreviewWindow = adaptive(
             dark: .srgbInk(1, alpha: 0.22), light: .srgbInk(1, alpha: 0.28))
@@ -500,8 +502,59 @@ enum Theme {
     }
 }
 
+private struct FrostedSurface<S: Shape>: ViewModifier {
+    let shape: S
+    let isInteractive: Bool
+    let drawsFallbackShadow: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            if isInteractive {
+                content.glassEffect(.regular.interactive(), in: shape)
+            } else {
+                content.glassEffect(.regular, in: shape)
+            }
+        } else {
+            content.background { fallback }
+        }
+    }
+
+    private var fallback: some View {
+        shape
+            .fill(.ultraThinMaterial)
+            .overlay { shape.fill(Theme.Colors.glassFrost) }
+            .overlay {
+                shape.stroke(
+                    Theme.Colors.border.opacity(0.6), lineWidth: Theme.Size.hairline / 2)
+            }
+            .shadow(
+                color: drawsFallbackShadow ? .black.opacity(0.22) : .clear,
+                radius: Theme.Spacing.sm, y: Theme.Spacing.xxs)
+    }
+}
+
 extension View {
     func frosted(in shape: some Shape) -> some View {
-        glassEffect(.regular.interactive(), in: shape)
+        modifier(FrostedSurface(shape: shape, isInteractive: true, drawsFallbackShadow: true))
+    }
+
+    /// A floating menu surface with Liquid Glass where the OS supports it.
+    func frostedMenu(in shape: some Shape) -> some View {
+        modifier(FrostedSurface(shape: shape, isInteractive: false, drawsFallbackShadow: true))
+    }
+
+    /// A window-owned surface whose AppKit panel already supplies elevation.
+    func frostedPanel(in shape: some Shape) -> some View {
+        modifier(FrostedSurface(shape: shape, isInteractive: false, drawsFallbackShadow: false))
+    }
+
+    @ViewBuilder
+    func glassButtonStyle() -> some View {
+        if #available(macOS 26.0, *) {
+            buttonStyle(.glass)
+        } else {
+            buttonStyle(.bordered)
+        }
     }
 }
