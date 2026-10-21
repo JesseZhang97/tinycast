@@ -66,14 +66,19 @@ struct FormTextArea: NSViewRepresentable {
         if view.minSize != minSize { view.minSize = minSize }
         view.setAccessibilityLabel(label)
         if view.string != text {
-            if let storage = view.textStorage {
-                let range = NSRange(location: 0, length: storage.length)
-                view.breakUndoCoalescing()
-                if view.shouldChangeText(in: range, replacementString: text) {
-                    storage.replaceCharacters(in: range, with: text)
-                    view.didChangeText()
+            // Harnesses compile at the 26 SDK floor, so #available(26) is folded away.
+            if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 {
+                if let storage = view.textStorage {
+                    let range = NSRange(location: 0, length: storage.length)
+                    view.breakUndoCoalescing()
+                    if view.shouldChangeText(in: range, replacementString: text) {
+                        storage.replaceCharacters(in: range, with: text)
+                        view.didChangeText()
+                    }
+                    view.breakUndoCoalescing()
                 }
-                view.breakUndoCoalescing()
+            } else {
+                view.replaceBoundText(text)
             }
             if let selection, case .selection(let range) = selection.indices {
                 view.setSelectedRange(NSRange(range, in: text))
@@ -107,6 +112,25 @@ struct FormTextArea: NSViewRepresentable {
         private let editingUndoManager = UndoManager()
 
         override var undoManager: UndoManager? { editingUndoManager }
+
+        /// Sequoia keeps the typing group open; clearing it during undo() deadlocks the manager.
+        func replaceBoundText(_ newValue: String) {
+            let old = string
+            guard old != newValue else { return }
+            breakUndoCoalescing()
+            editingUndoManager.disableUndoRegistration()
+            if let storage = textStorage {
+                storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: newValue)
+            } else {
+                string = newValue
+            }
+            didChangeText()
+            editingUndoManager.enableUndoRegistration()
+            if !editingUndoManager.isUndoing, !editingUndoManager.isRedoing {
+                editingUndoManager.removeAllActions()
+            }
+            editingUndoManager.registerUndo(withTarget: self) { $0.replaceBoundText(old) }
+        }
 
         // The non-activating panel cannot rely on the frontmost app's Undo menu.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
