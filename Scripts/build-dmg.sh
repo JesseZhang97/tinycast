@@ -31,8 +31,10 @@ else
     fi
 fi
 
+quiet_args=()
 if [ "$unsigned" -eq 1 ]; then
     echo "▸ Building unsigned universal Tinycast.app (Release)…"
+    quiet_args=(-quiet)
 else
     echo "▸ Building signed Tinycast.app (Release)…"
 fi
@@ -40,6 +42,7 @@ xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
     -derivedDataPath "$DERIVED" \
     "${sign_args[@]}" \
     ${version:+MARKETING_VERSION="$version"} \
+    "${quiet_args[@]}" \
     build
 
 APP="$DERIVED/Build/Products/Release/Tinycast.app"
