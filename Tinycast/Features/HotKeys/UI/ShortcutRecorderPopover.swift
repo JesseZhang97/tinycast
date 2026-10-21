@@ -68,8 +68,8 @@ struct ShortcutRecorderPopover: View {
                     Theme.Spacing.sm
                         + (placement.caretEdge == .top ? Theme.Size.calloutCaretHeight : 0))
         }
-        .glassEffect(
-            .regular, in: CalloutShape(caretEdge: placement.caretEdge, caretX: placement.caretX))
+        .frostedMenu(
+            in: CalloutShape(caretEdge: placement.caretEdge, caretX: placement.caretX))
     }
 
     private var state: State {
