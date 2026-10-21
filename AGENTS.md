@@ -2,7 +2,7 @@
 
 ## macOS 15 compatibility branch
 
-This branch is the explicit exception to the latest-only policy below. Keep `main` aligned with
+This branch is the explicit exception to the modern-first policy below. Keep `main` aligned with
 upstream and put every macOS 15 fallback here, behind a macOS 26 availability boundary. Read
 [`docs/macos15.md`](docs/macos15.md) before syncing upstream or changing a compatibility seam.
 

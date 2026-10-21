@@ -1,0 +1,90 @@
+name: macOS 15 compatibility
+
+on:
+  push:
+    branches: [macos15, codex/macos15, port/**]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort -V | tail -n 1)"
+          test -n "$XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Install lint dependency
+        run: brew install swiftlint
+      - name: Prefer Dark
+        run: defaults write -g AppleInterfaceStyle Dark
+      - name: Run harnesses
+        run: ./Scripts/run-tests.sh
+      - name: Lint
+        run: ./Scripts/lint.sh
+      - name: Verify universal macOS 15 build
+        run: ./Scripts/verify-macos15.sh
+      - name: Build unsigned universal DMG
+        if: success() || failure()
+        run: ./Scripts/build-dmg.sh --unsigned
+      - uses: actions/upload-artifact@v7
+        if: success() || failure()
+        with:
+          name: Tinycast-macos15-unsigned
+          path: build/Tinycast-*.dmg
+          if-no-files-found: error
+
+  macos15:
+    runs-on: macos-15
+    needs: verify
+    if: success() || failure()
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show runner OS
+        run: sw_vers
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort -V | tail -n 1)"
+          test -n "$XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Prefer Dark
+        run: defaults write -g AppleInterfaceStyle Dark
+      - name: Build with macOS 15 deployment target
+        id: build
+        run: |
+          log="$RUNNER_TEMP/xcodebuild.log"
+          if xcodebuild -project Tinycast.xcodeproj -scheme Tinycast \
+            -configuration Debug -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            MACOSX_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO build \
+            >"$log" 2>&1
+          then
+            echo "local Debug build succeeded"
+            echo "app=$RUNNER_TEMP/DerivedData/Build/Products/Debug/Tinycast Dev.app" >> "$GITHUB_OUTPUT"
+          elif grep -q 'CompileAssetCatalogVariant\|tinycast.icon' "$log"; then
+            echo "actool cannot compile tinycast.icon on macOS 15; smoke the unsigned DMG instead."
+            echo "use_dmg=1" >> "$GITHUB_OUTPUT"
+          else
+            tail -80 "$log"
+            exit 1
+          fi
+      - name: Run harnesses
+        run: ./Scripts/run-tests.sh
+      - uses: actions/download-artifact@v7
+        if: steps.build.outputs.use_dmg == '1'
+        with:
+          name: Tinycast-macos15-unsigned
+          path: dist
+      - name: Smoke-launch the built app
+        run: |
+          if [ -n "${{ steps.build.outputs.app }}" ]; then
+            ./Scripts/smoke-macos15.sh "${{ steps.build.outputs.app }}"
+          else
+            DMG="$(echo dist/Tinycast-*.dmg)"
+            MOUNT="$RUNNER_TEMP/tinycast-dmg"
+            mkdir -p "$MOUNT"
+            hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+            cp -R "$MOUNT/Tinycast.app" "$RUNNER_TEMP/Tinycast.app"
+            hdiutil detach "$MOUNT"
+            ./Scripts/smoke-macos15.sh "$RUNNER_TEMP/Tinycast.app"
+          fi
