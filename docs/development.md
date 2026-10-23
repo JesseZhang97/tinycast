@@ -5,7 +5,7 @@ verifying a change is [testing.md](testing.md).
 
 ## Requirements
 
-- macOS 26 or later (Liquid Glass).
+- macOS 15 or later; macOS 26 renders Liquid Glass while macOS 15 uses the compatibility material.
 - Xcode 26 — it provides the SwiftUI macro plugin and the SDK.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen), and for linting:
   `brew install swiftlint`.

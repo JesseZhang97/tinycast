@@ -191,11 +191,15 @@ struct ClipboardTextTests {
         expect(store.setTextSearchEnabled(true), "enable extraction for scheduling fixture")
         var idle = false
         var calls = 0
+        var holdFirst = true
         let indexer = ClipboardTextIndexer(
             store: store, delay: .milliseconds(10), canRun: { idle },
             extract: { _ in
                 await MainActor.run { calls += 1 }
-                try await Task.sleep(for: .milliseconds(80))
+                while await MainActor.run(body: { holdFirst }) {
+                    try await Task.sleep(for: .milliseconds(10))
+                    try Task.checkCancellation()
+                }
                 return "scheduled result"
             })
         store.onItemsChanged = { [weak indexer] in indexer?.schedule() }
@@ -207,8 +211,8 @@ struct ClipboardTextTests {
         try await waitUntil { calls == 1 }
         indexer.stop()
         await indexer.waitUntilStopped()
-        try await Task.sleep(for: .milliseconds(120))
         expect(store.nextExtractionItem() != nil, "disable cancels in-flight result")
+        holdFirst = false
         indexer.start()
         try await waitUntil { store.nextExtractionItem() == nil }
         expect(calls == 2, "reenable resumes cancelled work")
@@ -297,13 +301,15 @@ struct ClipboardTextTests {
         store.close()
     }
 
-    static func waitUntil(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
-        while ContinuousClock.now < deadline {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        expect(false, "scheduler completed before timeout")
+    static func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+        try await Task.detached {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while ContinuousClock.now < deadline {
+                if await condition() { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            await MainActor.run { expect(false, "scheduler completed before timeout") }
+        }.value
     }
 
     static func makeImage() -> CGImage {

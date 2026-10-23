@@ -57,7 +57,7 @@ final class ClipboardTextIndexer {
         }
         guard task == nil else { return }
         let delay = delay
-        task = Task(priority: .background) { [weak self] in
+        task = Task { [weak self] in
             defer {
                 self?.task = nil
                 self?.waitingForRetry = false
@@ -81,7 +81,7 @@ final class ClipboardTextIndexer {
                 }
                 let generation = self.store.extractionGeneration
                 let extract = self.extract
-                let worker = Task.detached(priority: .background) { try await extract(item) }
+                let worker = Task.detached { try await extract(item) }
                 do {
                     let text = try await withTaskCancellationHandler {
                         try await worker.value

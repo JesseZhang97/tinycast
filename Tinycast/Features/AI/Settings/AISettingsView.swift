@@ -95,7 +95,8 @@ struct AISettingsView: View {
     }
 
     private var appleIntelligenceReason: String? {
-        settings.isAppleIntelligenceAvailable() ? nil : AppleIntelligenceProvider.status().message
+        settings.isAppleIntelligenceAvailable()
+            ? nil : AIProviderFactory.appleIntelligenceStatus().message
     }
 
     private var providerSummary: String {
