@@ -39,9 +39,10 @@ branch into `main`.
   on macOS 15 rather than crashing or preventing the rest of Quick Actions from working.
 - Typed `NotificationCenter` observers (`addObserver(of:for:)`, `DidTerminateApplicationMessage`)
   are macOS 26-only. macOS 15 uses `addObserver(forName:object:queue:)` with the same names.
-- `NetworkListener` is macOS 26-only. MCP OAuth and the OpenCode MCP bridge keep the modern path
-  behind one availability boundary and use `NWListener` below macOS 26. A seam a standalone harness
-  exercises uses `ProcessInfo`, because those harnesses compile at the 26 SDK floor.
+- `NetworkListener` is macOS 26-only. MCP OAuth keeps the modern path behind one availability
+  boundary and uses `NWListener` below macOS 26. The OpenCode MCP bridge uses a POSIX loopback
+  listener there: `NWListener` with an ephemeral port never leaves setup on macOS 15. A seam a
+  standalone harness exercises uses `ProcessInfo`, because those harnesses compile at the 26 SDK floor.
 - The release build is universal because macOS 15 still runs on Intel.
 
 ## Verification

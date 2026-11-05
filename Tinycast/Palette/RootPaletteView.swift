@@ -392,8 +392,13 @@ struct RootPaletteView: View {
     }
 
     /// Split from `body` for the same reason `keyHandlers` is: one chain cannot carry them all.
-    @ViewBuilder
     private func stateObservers(_ content: some View) -> some View {
+        lifecycleObservers(sessionObservers(content))
+    }
+
+    /// Query and mode observers; kept off `lifecycleObservers` so Release at 15.0 can type-check.
+    @ViewBuilder
+    private func sessionObservers(_ content: some View) -> some View {
         emojiObservers(content)
             // Every show bumps focusToken so the search field refocuses.
             .onChange(of: vm.focusToken) {
@@ -467,6 +472,11 @@ struct RootPaletteView: View {
                     Task { await extensions.stop() }
                 }
             }
+    }
+
+    @ViewBuilder
+    private func lifecycleObservers(_ content: some View) -> some View {
+        content
             // `prepare` may change nothing else, so this still lands the list as freshly opened.
             .onChange(of: vm.resetToken) {
                 if menuOpen { closeMenus() }

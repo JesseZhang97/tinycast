@@ -16,7 +16,8 @@ final class OpenCodeMCPBridge {
     private var spent = 0
     private var invoking = false
     private var waiting: [CheckedContinuation<Void, Error>] = []
-    private var legacyListener: NWListener?
+    private var listenFD: Int32 = -1
+    private var acceptSource: DispatchSourceRead?
 
     init(
         session: AIToolSession, event: @escaping (AIStreamEvent) -> Void,
@@ -29,7 +30,7 @@ final class OpenCodeMCPBridge {
 
     isolated deinit {
         task?.cancel()
-        legacyListener?.cancel()
+        acceptSource?.cancel()
     }
 
     func start() async throws -> String {
@@ -39,10 +40,10 @@ final class OpenCodeMCPBridge {
             if #available(macOS 26.0, *) {
                 port = try await startModern()
             } else {
-                port = try await startLegacy()
+                port = try startLegacy()
             }
         } else {
-            port = try await startLegacy()
+            port = try startLegacy()
         }
         try Task.checkCancellation()
         guard !stopped else { throw CancellationError() }
@@ -95,8 +96,9 @@ final class OpenCodeMCPBridge {
         waiting = []
         task?.cancel()
         task = nil
-        legacyListener?.cancel()
-        legacyListener = nil
+        acceptSource?.cancel()
+        acceptSource = nil
+        listenFD = -1
     }
 
     private func fail(_ error: any Error) {
@@ -297,49 +299,67 @@ final class OpenCodeMCPBridge {
         try await connection.send(response, endOfStream: true)
     }
 
-    private func startLegacy() async throws -> UInt16 {
-        let port = try Self.reservedLoopbackPort()
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
-            host: .ipv4(.loopback), port: port)
-        let listener = try NWListener(using: parameters)
-        legacyListener = listener
-        return try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            return try await withCheckedThrowingContinuation { continuation in
-                ready = continuation
-                listener.stateUpdateHandler = { [weak self] status in
-                    Task { @MainActor in
-                        switch status {
-                        case .ready:
-                            self?.ready?.resume(returning: port.rawValue)
-                            self?.ready = nil
-                        case .failed:
-                            self?.fail(URLError(.cannotConnectToHost))
-                        default: break
-                        }
-                    }
-                }
-                listener.newConnectionHandler = { [weak self] connection in
-                    connection.start(queue: .main)
-                    Task { @MainActor in
-                        await self?.receiveLegacy(connection)
-                    }
-                }
-                listener.start(queue: .main)
+    /// NWListener never leaves setup for an ephemeral loopback port on macOS 15.
+    private func startLegacy() throws -> UInt16 {
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard socket >= 0 else { throw URLError(.cannotConnectToHost) }
+        var reuse: Int32 = 1
+        _ = Darwin.setsockopt(
+            socket, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        address.sin_port = 0
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
-        } onCancel: {
-            Task { @MainActor [weak self] in self?.stop() }
+        }
+        guard bound == 0, Darwin.listen(socket, 16) == 0 else {
+            Darwin.close(socket)
+            throw URLError(.cannotConnectToHost)
+        }
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(socket, $0, &length)
+            }
+        }
+        let flags = Darwin.fcntl(socket, F_GETFL)
+        _ = Darwin.fcntl(socket, F_SETFL, flags | O_NONBLOCK)
+        guard named == 0 else {
+            Darwin.close(socket)
+            throw URLError(.cannotConnectToHost)
+        }
+        let port = UInt16(bigEndian: address.sin_port)
+        listenFD = socket
+        let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
+        source.setEventHandler { [weak self] in self?.acceptLegacy() }
+        source.setCancelHandler { Darwin.close(socket) }
+        acceptSource = source
+        source.resume()
+        return port
+    }
+
+    private func acceptLegacy() {
+        while listenFD >= 0 {
+            let fd = Darwin.accept(listenFD, nil, nil)
+            if fd < 0 {
+                if errno == EAGAIN || errno == EWOULDBLOCK { return }
+                return
+            }
+            Task { await self.serveLegacy(fd) }
         }
     }
 
-    private func receiveLegacy(_ connection: NWConnection) async {
+    private func serveLegacy(_ fd: Int32) async {
+        defer { Darwin.close(fd) }
         do {
             let body = try await withThrowingTaskGroup(of: Data.self) { group in
                 group.addTask { [weak self] in
                     guard let self else { throw CancellationError() }
-                    return try await self.readLegacy(connection)
+                    return try await self.readLegacy(fd)
                 }
                 group.addTask {
                     try await Task.sleep(for: .seconds(5))
@@ -352,21 +372,20 @@ final class OpenCodeMCPBridge {
             let result = try await respond(body)
             try Task.checkCancellation()
             guard !stopped else { return }
-            try await sendLegacy(
-                connection, status: result == nil ? "202 Accepted" : "200 OK", body: result)
+            try await sendLegacy(fd, status: result == nil ? "202 Accepted" : "200 OK", body: result)
         } catch let error as HTTPFailure {
-            try? await sendLegacy(connection, status: error.status, body: nil)
+            try? await sendLegacy(fd, status: error.status, body: nil)
         } catch {
             return
         }
     }
 
-    private func readLegacy(_ connection: NWConnection) async throws -> Data {
+    private func readLegacy(_ fd: Int32) async throws -> Data {
         var bytes = Data()
         var bodyStart: Int?
         var length = 0
         while true {
-            let chunk = try await receiveLegacy(connection, atMost: 8192)
+            let chunk = try await receiveLegacy(fd, atMost: 8192)
             guard !chunk.isEmpty else { throw HTTPFailure(status: "400 Bad Request") }
             bytes.append(chunk)
             if bodyStart == nil {
@@ -409,21 +428,25 @@ final class OpenCodeMCPBridge {
         }
     }
 
-    private func receiveLegacy(_ connection: NWConnection, atMost: Int) async throws -> Data {
+    private func receiveLegacy(_ fd: Int32, atMost: Int) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: atMost) {
-                content, _, isComplete, error in
-                if let error {
-                    continuation.resume(throwing: error)
+            DispatchQueue.global(qos: .userInitiated).async {
+                var buffer = [UInt8](repeating: 0, count: atMost)
+                let count = buffer.withUnsafeMutableBytes {
+                    Darwin.recv(fd, $0.baseAddress, atMost, 0)
+                }
+                if count < 0 {
+                    continuation.resume(throwing: URLError(.networkConnectionLost))
+                } else if count == 0 {
+                    continuation.resume(returning: Data())
                 } else {
-                    continuation.resume(returning: content ?? Data())
-                    if isComplete { connection.cancel() }
+                    continuation.resume(returning: Data(buffer.prefix(count)))
                 }
             }
         }
     }
 
-    private func sendLegacy(_ connection: NWConnection, status: String, body: Data?) async throws {
+    private func sendLegacy(_ fd: Int32, status: String, body: Data?) async throws {
         let body = body ?? Data()
         var response = Data(
             ("HTTP/1.1 \(status)\r\nContent-Type: application/json\r\n"
@@ -431,47 +454,20 @@ final class OpenCodeMCPBridge {
                 + "Content-Length: \(body.count)\r\n\r\n").utf8)
         response.append(body)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(
-                content: response,
-                isComplete: true,
-                completion: .contentProcessed { error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume()
+            DispatchQueue.global(qos: .userInitiated).async {
+                var sent = 0
+                while sent < response.count {
+                    let count = response.withUnsafeBytes {
+                        Darwin.send(fd, $0.baseAddress! + sent, response.count - sent, 0)
                     }
-                    connection.cancel()
-                })
-        }
-    }
-
-    /// `requiredLocalEndpoint` with `.any` never leaves setup on macOS 15.
-    private static func reservedLoopbackPort() throws -> NWEndpoint.Port {
-        let socket = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-        guard socket >= 0 else { throw URLError(.cannotConnectToHost) }
-        defer { Darwin.close(socket) }
-        var reuse: Int32 = 1
-        _ = Darwin.setsockopt(
-            socket, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        address.sin_port = 0
-        let bound = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    if count <= 0 {
+                        continuation.resume(throwing: URLError(.networkConnectionLost))
+                        return
+                    }
+                    sent += count
+                }
+                continuation.resume()
             }
         }
-        guard bound == 0 else { throw URLError(.cannotConnectToHost) }
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let named = withUnsafeMutablePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.getsockname(socket, $0, &length)
-            }
-        }
-        guard named == 0, let port = NWEndpoint.Port(rawValue: UInt16(bigEndian: address.sin_port))
-        else { throw URLError(.cannotConnectToHost) }
-        return port
     }
 }
