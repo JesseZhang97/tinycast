@@ -61,7 +61,8 @@ enum AIModelDiscovery {
     }
 
     static func query(
-        provider: AIProviderKind, baseURL: URL, apiKey: String, appTitle: String
+        provider: AIProviderKind, baseURL: URL, apiKey: String, appTitle: String,
+        headers: [String: String] = [:]
     ) throws -> Query {
         let usesNativeGemini =
             provider == .gemini
@@ -75,16 +76,17 @@ enum AIModelDiscovery {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         if provider == .anthropic {
-            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            if !apiKey.isEmpty { request.setValue(apiKey, forHTTPHeaderField: "x-api-key") }
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         } else if usesNativeGemini {
-            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+            if !apiKey.isEmpty { request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key") }
         } else if !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
         if provider == .openRouter {
             request.setValue(appTitle, forHTTPHeaderField: "X-OpenRouter-Title")
         }
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         return Query(request: request, responseShape: usesNativeGemini ? .gemini : .openAI)
     }
 
@@ -157,6 +159,8 @@ enum AIModelDiscovery {
         if path == "/" { path = "" }
         if path.hasSuffix("/chat/completions") {
             path.removeLast("/chat/completions".count)
+        } else if path.hasSuffix("/responses") {
+            path.removeLast("/responses".count)
         } else if path.hasSuffix("/v1/messages") {
             path.removeLast("/v1/messages".count)
         } else if path.hasSuffix("/messages") {

@@ -2,7 +2,7 @@ name: macOS 15 compatibility
 
 on:
   push:
-    branches: [macos15, codex/macos15, port/**]
+    branches: [macos15, codex/macos15, port/**, sync/**]
   pull_request:
 
 jobs:
@@ -10,6 +10,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Select Xcode 26
         run: |
           XCODE_PATH="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort -V | tail -n 1)"
@@ -41,6 +43,8 @@ jobs:
     if: success() || failure()
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Show runner OS
         run: sw_vers
       - name: Select Xcode 26

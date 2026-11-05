@@ -236,10 +236,16 @@ final class AppCore {
     @ObservationIgnored private(set) lazy var quickAICoordinator = QuickAICoordinator(
         chats: aiChats, settings: settings, palette: palette,
         paletteCoordinator: paletteCoordinator, core: self)
+    @ObservationIgnored private(set) lazy var deepLinkCoordinator = DeepLinkCoordinator(
+        scheme: AppURLScheme.current, settings: settings, hotKeys: hotKeys,
+        paletteCoordinator: paletteCoordinator, settingsCoordinator: settingsCoordinator,
+        core: self)
 
     @ObservationIgnored private lazy var windowController = PaletteWindowController(core: self)
     @ObservationIgnored private lazy var messageHUD = MessageHUDController(settings: settings)
     private(set) var isShowingDialog = false
+    /// A link that launched the app can arrive before `start` wires anything; it waits, then runs.
+    @ObservationIgnored private var pendingURLs: [URL]? = []
     var isDimmingPaletteForDialog: Bool { isShowingDialog && windowController.isVisible }
     @ObservationIgnored private lazy var dialogs = DialogController(
         settings: settings,
@@ -278,13 +284,15 @@ final class AppCore {
             saveSelection: { UserDefaults.standard.set($0?.rawValue, forKey: noteSelectionKey) })
     }
 
-    func start() {
+    func start(launchedByUser: Bool) {
         Signposts.interval("AppCore.start") {
             // Shorten AppKit's ~2–3s tooltip delay; registration domain, so a user default wins.
             UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 250])
+            CompactFavoritesMigration.run(settingsFileEnabled: settings.settingsFileEnabled)
             NSApp.setActivationPolicy(.accessory)
             dictationAudioDucker.recover()
             applyAppearance()
+            applyMotion()
             observeEffectiveAppearance()
             pinnedEmoji.onPersistenceFailure = { [weak self] in
                 self?.showMessage(String(localized: "Couldn't save Emoji & Symbols pins"), tone: .danger)
@@ -357,6 +365,7 @@ final class AppCore {
             supportReminders.start()
 
             hyperKey.healthTicker = healthTicker
+            dictationKey.healthTicker = healthTicker
             hotKeys.modifierTapMonitor.healthTicker = healthTicker
             snippetListener.healthTicker = healthTicker
 
@@ -412,13 +421,7 @@ final class AppCore {
                 }
             }
             hotKeys.displayName = { [weak self] action in self?.hotKeyDisplayName(for: action) }
-            hotKeys.allowsAction = { [weak self] action in
-                guard let self, visibility.allowsHotKey(action) else { return false }
-                if action == .dictation { return settings.dictationEnabled }
-                // A disabled feature drops its commands from the launcher; their shortcuts go too.
-                guard case .command(let id) = action else { return true }
-                return appIndex.isCommandEnabled(id)
-            }
+            hotKeys.allowsAction = { [weak self] in self?.allowsHotKeyAction($0) ?? false }
             KeyShortcut.displayedHyperChord = { [settings] in
                 guard settings.hyperKey != .none else { return nil }
                 return KeyShortcut.hyperChord(includesShift: settings.hyperKeyIncludesShift)
@@ -459,8 +462,20 @@ final class AppCore {
             if !OnboardingState.hasOnboarded {
                 OnboardingState.markShown()
                 onboardingCoordinator.showOnboarding()
+            } else if launchedByUser {
+                paletteCoordinator.showPalette(mode: .launcher)
+            }
+            if let version = updateChecker.takeInstalledVersion() {
+                showMessage(String(localized: "Updated to Tinycast \(version.description)"))
             }
         }
+        openPendingURLs()
+    }
+
+    private func openPendingURLs() {
+        let waiting = pendingURLs ?? []
+        pendingURLs = nil
+        waiting.forEach(handleOpenURL)
     }
 
     func handleReopen() {
@@ -474,6 +489,14 @@ final class AppCore {
     }
 
     func handleOpenURL(_ url: URL) {
+        if pendingURLs != nil {
+            pendingURLs?.append(url)
+            return
+        }
+        if deepLinkCoordinator.handles(url) {
+            deepLinkCoordinator.open(url)
+            return
+        }
         guard ExtensionDeepLink.claims(url) else { return }
         guard let route = ExtensionDeepLink.route(url: url) else {
             paletteCoordinator.showPalette(mode: .launcher, restoreAnyMode: true)
@@ -485,6 +508,14 @@ final class AppCore {
         case .storeInstall(let install):
             extensionCoordinator.showStoreInstall(install)
         }
+    }
+
+    func allowsHotKeyAction(_ action: HotKeyAction) -> Bool {
+        guard visibility.allowsHotKey(action) else { return false }
+        if action == .dictation { return settings.dictationEnabled }
+        // A disabled feature drops its commands from the launcher; their shortcuts go too.
+        guard case .command(let id) = action else { return true }
+        return appIndex.isCommandEnabled(id)
     }
 
     /// The store-backed half of the conflict message; `HotKeyManager` names the catalogs itself.
@@ -692,6 +723,8 @@ final class AppCore {
                 $0.menuSearchCoordinator.applyEnabled()
             })
         track({ _ = $0.notesEnabled }, reproject: { $0.notesCoordinator.applyEnabled() })
+        track(
+            { _ = $0.notesShowsInMenuBar }, reproject: { $0.notesCoordinator.applyMenuBarItem() })
         track({ _ = $0.aiEnabled }, reproject: { $0.aiChatCoordinator.applyEnabled() })
         track(
             { _ = $0.dictationIdleRelease },
@@ -745,6 +778,7 @@ final class AppCore {
             { _ = $0.snippetsShowInLauncher },
             reproject: { $0.snippetCoordinator.applySnippetsLauncherPresence() })
         track({ _ = $0.appearance }, reproject: { $0.applyAppearance() })
+        track({ _ = $0.animationsEnabled }, reproject: { $0.applyMotion() })
         track({ _ = $0.language }, reproject: { $0.offerLanguageRelaunch() })
         track({ _ = $0.interfaceSize }, reproject: { $0.windowController.applyInterfaceSize() })
         // Settings panes did these on change; settings.json can change them with no pane open.
@@ -764,6 +798,14 @@ final class AppCore {
     /// `.system` resolves to `nil`, so AppKit follows macOS with nothing polling.
     private func applyAppearance() {
         NSApp.appearance = settings.appearance.nsAppearance
+    }
+
+    /// A built panel keeps the behaviour it was made with, so the live ones are re-pointed.
+    private func applyMotion() {
+        Motion.isEnabled = settings.animationsEnabled
+        for case let panel as any AnimatedPanel in NSApp.windows {
+            panel.followMotion()
+        }
     }
 
     private var isLanguagePending: Bool { settings.language.rawValue != launchLocalization }

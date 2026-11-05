@@ -2,8 +2,9 @@
 
 ## macOS 15 compatibility branch
 
-This branch is the explicit exception to the modern-first policy below. Keep `main` aligned with
-upstream and put every macOS 15 fallback here, behind a macOS 26 availability boundary. Read
+This branch is the explicit exception to the modern-first policy below. The fork's `main` is the
+macOS 15 working branch, not an upstream mirror. Merge each upstream stable tag into a `sync/`
+branch, re-apply the compatibility pattern, and open a PR into `main`. Read
 [`docs/macos15.md`](docs/macos15.md) before syncing upstream or changing a compatibility seam.
 
 A native macOS menu-bar launcher: fuzzy app launcher, global and per-app hotkeys, a text/image
@@ -32,8 +33,9 @@ Prefer current APIs and language features:
 - **A deprecated API is a defect**, not a warning to live with.
 - **Verify API and language-feature availability** against the SDK and compiler used by the build
   and CI. Use direct availability checks where macOS 27+ APIs require them to preserve macOS 26 support.
-- **No compatibility layers, legacy workarounds or obsolete patterns.** No migration scaffolding,
-  support below macOS 26 or speculative fallbacks. Keep the implementation direct.
+- **No compatibility layers, legacy workarounds or obsolete patterns.** No support below macOS 26 or
+  speculative fallbacks. Keep the implementation direct. Migration code lives only in
+  `Tinycast/Migrations/` and is deleted after one stable release ([migrations.md](docs/migrations.md)).
 
 Carbon is a deliberate capability-gap dependency rather than inertia: nothing modern registers a
 system-wide chord, and HIToolbox's TIS APIs remain the public input-source mechanism. Full reasoning in
@@ -49,6 +51,7 @@ system-wide chord, and HIToolbox's TIS APIs remain the public input-source mecha
 | `Tinycast/Palette/`      | the palette shell: panel, window controller, `RootPaletteView`, `PaletteScreen`         |
 | `Tinycast/Windows/`      | the non-palette AppKit surfaces: `Dialog/`, `HUD/`, `About/`, `AppWindowController`     |
 | `Tinycast/Features/`     | one folder per feature; larger ones split `Model/` `Service/` `UI/` `Settings/`         |
+| `Tinycast/Migrations/`   | one-shot repairs of state an older release left behind, each deleted after one release  |
 | `Tests/`                 | the standalone harnesses — one Swift file each, no XCTest target                        |
 | `Scripts/`               | every executable script: test runner, data generators, packaging, linting, editor setup |
 
@@ -60,6 +63,7 @@ system-wide chord, and HIToolbox's TIS APIs remain the public input-source mecha
 | build, run or regenerate data                               | [development.md](docs/development.md)                        |
 | add or restyle any view                                     | [ui.md](docs/ui.md)                                          |
 | touch one feature's internals                               | [features/](docs/features/) — each opens with its invariants |
+| remove or rename anything persisted                         | [migrations.md](docs/migrations.md)                          |
 | package or ship a build                                     | [release.md](docs/release.md)                                |
 
 ## Non-negotiables

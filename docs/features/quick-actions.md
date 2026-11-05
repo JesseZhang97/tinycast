@@ -154,6 +154,12 @@ source language, because `TranslationSession(installedSource:target:)` needs a c
 The direct installed-language session initializer is macOS 26-only. On macOS 15 the Translate action
 reports that requirement; other Quick Actions and configured model providers remain available.
 
+**A download is a locale, not a language.** Apple matches `en-US` and `en-GB` separately, so the bare
+`en` the recognizer reports finds only the first and calls an installed `en-GB` pair missing — which
+read as *Chinese hasn't been downloaded yet* on a Mac that had Chinese. Both sides are retried across
+every supported spelling of the same script before the panel names a language, and the language it
+names is the one with no downloaded asset of its own.
+
 `TranslationError` is annotated `macOS 26.4` while the deployment floor is `26.0`, so failures are
 caught as plain `Error` and reported by what was asked rather than by matching its cases.
 
@@ -174,7 +180,7 @@ the panel. System Settings has no anchor for the sheet itself, so the last click
 ## The panel
 
 `QuickActionPanel` is Tinycast's **fourth borderless surface**, beside the dialog, the notes panel
-and the join preview. It takes the same recipe — `panelScrim`, then `GlassEffectView`, then the
+and the join preview. It takes the same recipe — `GlassEffectView`, then the
 clip — and sits at `.floating` like the join preview, so a failure report still lands on top of it.
 Its footer speaks the same button language as a dialog's — `ModalActionButtonStyle`, with Replace
 as the `.primary` role — so every borderless surface answers in one voice rather than dropping Aqua
@@ -205,7 +211,7 @@ result already fits, since dimming text that needs no scrolling reads as a defec
 
 Three things here were settled by rendering them, not by reasoning:
 `scrollEdgeEffectStyle` draws nothing in this panel — it renders a material where a scroll view meets
-a safe area, and over `panelScrim` + `GlassEffectView` that composites to nothing. `safeAreaBar`
+a safe area, and over `GlassEffectView` that composites to nothing. `safeAreaBar`
 makes it visible but lays its bars *over* the content instead of insetting it, so text runs through
 the buttons and escapes the corner clip. And a ramp starting at the panel edge rather than below the
 bar leaves text about 60% visible behind the title.
@@ -301,6 +307,10 @@ failure handler, so automatic expansion stays silent as before.
   `quickActionModelOverrides`.
 - Translate into a language that has not been downloaded: the panel names the language, and its
   button closes the panel and opens Language & Region.
+- Download English (UK) alone, with English (US) absent, and translate English text: the panel must
+  translate rather than call the target language missing.
+- Translate Korean text with Korean not downloaded and the target language installed: the panel names
+  Korean, the language that is actually missing.
 - Revoke Accessibility while enabled: a HUD explains instead of failing silently.
 - Harnesses: `quick-action-test` (action metadata, prompt boundaries, preview choices, routes and
   their repair) and

@@ -16,8 +16,9 @@ concurrency is required. Prefer the latest Swift patterns and modern Apple APIs,
 
 Verify API and language-feature availability against the SDK and compiler used by the build and CI.
 Use direct availability checks where macOS 27+ APIs require them to preserve macOS 26 support. Do not
-introduce compatibility layers, legacy workarounds, support below macOS 26, migration scaffolding or
-speculative fallbacks.
+introduce compatibility layers, legacy workarounds, support below macOS 26 or speculative fallbacks.
+Migration code lives only in `Migrations/` and is deleted after one stable release; see
+[migrations.md](migrations.md).
 
 In practice that means Observation and never `ObservableObject` or `@Published`; `SMAppService` and
 never an `LSSharedFileList` shim. Adopt successors directly and delete obsolete call sites rather
@@ -87,6 +88,8 @@ fit the table.
 | `Lexer`       | Splits text into classified token ranges in one pass; never rejects input     |
 | `Policy`      | A pure decision — no state, no effects                                        |
 | `Remapper`    | Keeps one HID key mapping on every matching device, including later arrivals  |
+| `Migration`   | Repairs state an older release left behind; deleted after one stable release  |
+| `Lock`        | Holds a cross-process exclusive claim that the kernel frees on exit           |
 
 `Manager` is the one worth thinking twice about. It means _lifecycle plus policy_, which is a lot for one
 type, so there are only four: `ClipboardManager` (polls, and owns the capture policy and the
@@ -250,6 +253,8 @@ the catalog (Xcode's own build does the same in the IDE). The six privacy prompt
 - **A view that only ever labels takes `LocalizedStringResource`**, so its callers pass plain literals
   and the compiler still extracts them: `SettingsRowTitle`, `SettingsAnchor`, `SettingsSearchEntry`,
   `FormRow`, `FeatureSwitchSection`, `SettingsEditorHeader`, `SettingsFilterField`.
+- **A `LocalizedStringResource` becomes a `String` through `resolved()`**, never `String(localized:)`:
+  that overload can skip the bundle's string-table cache and reparse the whole table on every call.
 - **Everything that also carries runtime text keeps `String`**, and its literal callers write
   `String(localized: "…")` — dialogs, HUD messages, `PopoverMenuItem`, AppKit menus and windows,
   `LocalizedError`, and every model `title`. `Model/` files use it too; it is Foundation.
@@ -266,10 +271,11 @@ the catalog (Xcode's own build does the same in the IDE). The six privacy prompt
   `SystemAction` and `WindowCommand` keep their English source as `englishName`, which the launcher
   indexes as an alternate title.
 
-English is the default; Tinycast never follows the Mac's language. Settings › General › Language
-writes the same per-app `AppleLanguages` key as System Settings › Language & Region › Applications,
-and it applies on relaunch. `TinycastLaunch` writes the key back before anything is localized, so an
-empty or unshipped list still launches in English. Because that key also changes
+On a fresh installation, Tinycast selects the Mac's primary language if supported, otherwise English,
+and saves that choice before any localization lookup. It does not keep following the Mac's language.
+Settings › General › Language writes the same per-app `AppleLanguages` key as System Settings ›
+Language & Region › Applications, and it applies on relaunch. An empty or unshipped stored list still
+launches in English. Because that key also changes
 `Locale.preferredLanguages` for this process, anything that indexes what the user *types* — app
 names, emoji keywords — reads macOS's own list through `SystemLanguages.preferred` instead.
 

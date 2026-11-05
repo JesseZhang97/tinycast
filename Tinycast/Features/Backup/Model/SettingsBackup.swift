@@ -40,13 +40,14 @@ struct SettingsBackup: Codable {
         var calcNumberStyle: String?
         var interfaceSize: String?
         var compactMode: Bool?
-        var showFavoritesInCompactMode: Bool?
+        var compactBarCommands: [String]?
         var searchScopes: [String]?
         var launcherShowsSuggestions: Bool?
         var rootSearchSensitivity: String?
         var openOnCursorScreen: Bool?
         // Safe to carry: it grants no permission class, just repositions the window.
         var paletteDraggable: Bool?
+        var animationsEnabled: Bool?
         var fileSearchEnabled: Bool?
         var fileSearchScopes: [String]?
         var fileSearchIgnorePatterns: [String]?
@@ -55,6 +56,7 @@ struct SettingsBackup: Codable {
         var notesEnabled: Bool?
         var notesRendersMarkdown: Bool?
         var notesShowsFormattingBar: Bool?
+        var notesShowsInMenuBar: Bool?
         // `snippetsEnabled` is absent: an import must not enable keystroke listening.
         var customCommandsEnabled: Bool?
         var customCommandsShowInLauncher: Bool?
@@ -67,6 +69,8 @@ struct SettingsBackup: Codable {
         var windowManagementShowInLauncher: Bool?
         var windowGap: Int?
         var windowCycle: String?
+        var windowWrapsDisplays: Bool?
+        var windowKeepsProportions: Bool?
         var windowLayoutsShowInLauncher: Bool?
         var windowRoomsShowInLauncher: Bool?
         // Carried, unlike `snippetsEnabled`: opening a link grants no permission class of its own.
@@ -154,12 +158,13 @@ extension SettingsBackup {
             calcNumberStyle: s.calcNumberStyle.rawValue,
             interfaceSize: s.interfaceSize.rawValue,
             compactMode: s.compactMode,
-            showFavoritesInCompactMode: s.showFavoritesInCompactMode,
+            compactBarCommands: s.compactBarCommands.map(\.rawValue),
             searchScopes: s.searchScopes,
             launcherShowsSuggestions: s.launcherShowsSuggestions,
             rootSearchSensitivity: s.rootSearchSensitivity.rawValue,
             openOnCursorScreen: s.openOnCursorScreen,
             paletteDraggable: s.paletteDraggable,
+            animationsEnabled: s.animationsEnabled,
             fileSearchEnabled: s.fileSearchEnabled,
             fileSearchScopes: s.fileSearchScopes,
             fileSearchIgnorePatterns: s.fileSearchIgnorePatterns,
@@ -168,6 +173,7 @@ extension SettingsBackup {
             notesEnabled: s.notesEnabled,
             notesRendersMarkdown: s.notesRendersMarkdown,
             notesShowsFormattingBar: s.notesShowsFormattingBar,
+            notesShowsInMenuBar: s.notesShowsInMenuBar,
             customCommandsEnabled: s.customCommandsEnabled,
             customCommandsShowInLauncher: s.customCommandsShowInLauncher,
             snippetsShowInLauncher: s.snippetsShowInLauncher,
@@ -178,6 +184,8 @@ extension SettingsBackup {
             windowManagementShowInLauncher: s.windowManagementShowInLauncher,
             windowGap: s.windowGap,
             windowCycle: s.windowCycle.rawValue,
+            windowWrapsDisplays: s.windowWrapsDisplays,
+            windowKeepsProportions: s.windowKeepsProportions,
             windowLayoutsShowInLauncher: s.windowLayoutsShowInLauncher,
             windowRoomsShowInLauncher: s.windowRoomsShowInLauncher,
             quicklinksEnabled: s.quicklinksEnabled,
@@ -387,8 +395,10 @@ extension SettingsBackup {
             settings.compactMode = flag
             count += 1
         }
-        if let flag = s.showFavoritesInCompactMode {
-            settings.showFavoritesInCompactMode = flag
+        if let identifiers = s.compactBarCommands,
+            let commands = CommandID.compactBarCommands(from: identifiers)
+        {
+            settings.compactBarCommands = commands
             count += 1
         }
         if let scopes = s.searchScopes {
@@ -409,6 +419,10 @@ extension SettingsBackup {
         }
         if let flag = s.paletteDraggable {
             settings.paletteDraggable = flag
+            count += 1
+        }
+        if let flag = s.animationsEnabled {
+            settings.animationsEnabled = flag
             count += 1
         }
         // Writing through AppSettings is enough; AppCore's sinks re-project the rest.
@@ -442,6 +456,10 @@ extension SettingsBackup {
         }
         if let flag = s.notesShowsFormattingBar {
             settings.notesShowsFormattingBar = flag
+            count += 1
+        }
+        if let flag = s.notesShowsInMenuBar {
+            settings.notesShowsInMenuBar = flag
             count += 1
         }
         if let flag = s.customCommandsEnabled {
@@ -482,6 +500,14 @@ extension SettingsBackup {
         }
         if let raw = s.windowCycle, let cycle = WindowCycle(rawValue: raw) {
             settings.windowCycle = cycle
+            count += 1
+        }
+        if let flag = s.windowWrapsDisplays {
+            settings.windowWrapsDisplays = flag
+            count += 1
+        }
+        if let flag = s.windowKeepsProportions {
+            settings.windowKeepsProportions = flag
             count += 1
         }
         if let flag = s.windowLayoutsShowInLauncher {

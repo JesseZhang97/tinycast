@@ -18,17 +18,14 @@ no appcast: the release feed the website already reads is the feed the app reads
   `-Universal-` one. Intel takes the universal zip and is offered *nothing* if it is missing, since a
   thin build would install and then refuse to launch; Apple silicon prefers the thin zip and falls
   back to universal.
-- **Nobody ever runs `xattr`.** An archive Tinycast fetched itself is not quarantined — macOS sets
-  that flag for sandboxed downloaders and for apps that opt in with `LSFileQuarantineEnabled`, and
-  Tinycast is neither. `Quarantine` checks anyway through `getxattr`/`removexattr` rather than the
-  `xattr` tool, and an app that still carries the flag is refused rather than installed.
+- **A downloaded update is never quarantined.** macOS sets that flag for sandboxed downloaders and
+  for apps that opt in with `LSFileQuarantineEnabled`, and Tinycast is neither. `Quarantine` checks
+  anyway, and an app that still carries the flag is refused rather than installed.
 - **The signature is the only integrity guarantee.** A downloaded bundle is trusted when its seal
-  validates, nested helper included, *and* it either satisfies the Developer ID requirement pinned in
-  `BundleSignature` or carries the byte-identical leaf certificate the running app does. The
-  requirement names the team, so a certificate renewal strands nobody; the leaf match is the path a
-  copy installed before the Developer ID switch has, and it goes away once none is left. `notarized`
-  is deliberately not in the requirement — it resolves the ticket through `syspolicyd` or the
-  network, so an offline Mac would refuse a bundle the chain already proves is ours.
+  validates, nested helper included, *and* it satisfies the Developer ID requirement pinned in
+  `BundleSignature`. The requirement names the team, so a certificate renewal strands nobody.
+  `notarized` is deliberately not in the requirement — it resolves the ticket through `syspolicyd`
+  or the network, so an offline Mac would refuse a bundle the chain already proves is ours.
 - **A build only ever updates within its own channel.** The channels are separate bundle ids installed
   side by side; crossing would mean installing a different app. `com.tinycast.app.dev` never updates
   at all, and does not advertise the command.
@@ -97,7 +94,8 @@ self-rescheduling pump, and one atomic JSON file.
 ~/Library/Caches/<bundle-id>/update-check.json
 ```
 
-It holds `lastCheckedAt`, the newest release seen, and the version the user dismissed. Freshness is
+It holds `lastCheckedAt`, the newest release seen, the version the user dismissed, and the version
+just installed. Freshness is
 measured from `lastCheckedAt`, so relaunching never re-asks GitHub; the interval is 24 h, dropping to
 2 h after a failed attempt, and the first check waits 30 s so it never lands in the login rush. The
 request carries a `User-Agent`, which the GitHub API rejects requests without.
@@ -125,6 +123,11 @@ One route, whatever the install came from:
    no privileged helper.
 6. Offer Relaunch, which spawns a detached waiter that reopens the app once this process exits —
    `open` on a bundle id that is still running would only re-activate the instance on its way out.
+
+A successful install records its version as `installedVersion`. The first launch running that
+version takes it and shows an "Updated to Tinycast <version>" HUD, whether it came from Relaunch or a
+later quit and reopen. A launch of any other version only clears it, so a brew or DMG install never
+reports.
 
 Nothing here touches `~/Library/Preferences`, `~/Library/Caches` or `Application Support`, so no
 setting, clipboard entry, note or snippet is affected by an update, by `brew upgrade`, or by both.

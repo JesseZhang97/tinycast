@@ -16,22 +16,32 @@ struct AIProviderTests {
     }
 
     static func instructionsFollowTheSetting() {
+        let cloud = AIModelSelection.codex(model: "gpt-5", effort: nil)
         for prompt in [nil, "", "   \n\t "] as [String?] {
             expect(
-                AIInstructions.compose(userPrompt: prompt, isEnabled: true, offersChoices: false)
+                AIInstructions.compose(
+                    userPrompt: prompt, isEnabled: true, offersChoices: false, model: cloud)
                     == AIPreamble.text,
                 "an absent or blank user prompt with choices off sends the preamble alone")
         }
         expect(
             AIInstructions.compose(
-                userPrompt: "  Answer only in haiku.  ", isEnabled: true, offersChoices: true)
+                userPrompt: "  Answer only in haiku.  ", isEnabled: true, offersChoices: true,
+                model: cloud)
                 == AIPreamble.text + "\n\n" + AIPreamble.choices + "\n\nAnswer only in haiku.",
             "instructions put the preamble and its choices before the trimmed user prompt")
         for prompt in [nil, "Answer only in haiku."] as [String?] {
             expect(
-                AIInstructions.compose(userPrompt: prompt, isEnabled: false, offersChoices: true)
+                AIInstructions.compose(
+                    userPrompt: prompt, isEnabled: false, offersChoices: true, model: cloud)
                     == nil,
                 "disabled instructions withhold the preamble, its choices and the user prompt")
+            expect(
+                AIInstructions.compose(
+                    userPrompt: prompt, isEnabled: true, offersChoices: true,
+                    model: .appleIntelligence)
+                    == nil,
+                "the on-device model gets no preamble, choices or user prompt")
         }
         expect(
             (AIPreamble.text + AIPreamble.choices).count < 1_800,
@@ -72,7 +82,7 @@ struct AIProviderTests {
         let openAI = AIRequestBody.make(
             turn,
             configuration: AIHTTPConfiguration(
-                provider: .openAI, baseURL: URL(string: "https://api.openai.com/v1")!,
+                provider: .openAICompatible, baseURL: URL(string: "https://api.openai.com/v1")!,
                 model: "gpt"))
         let parts =
             (openAI["messages"] as? [[String: Any]])?.first?["content"] as? [[String: Any]] ?? []
@@ -91,7 +101,7 @@ struct AIProviderTests {
         let documentOnly = AIRequestBody.make(
             AIRequest(messages: [AIMessage(role: .user, text: "", documents: [pdf])]),
             configuration: AIHTTPConfiguration(
-                provider: .openAI, baseURL: URL(string: "https://api.openai.com/v1")!,
+                provider: .openAICompatible, baseURL: URL(string: "https://api.openai.com/v1")!,
                 model: "gpt"))
         expect(
             ((documentOnly["messages"] as? [[String: Any]])?.first?["content"]
@@ -99,10 +109,19 @@ struct AIProviderTests {
             "a document-only turn still sends, as content parts")
     }
 
-    static func main() {
+    static func main() async throws {
+        if CommandLine.arguments.contains("mcp") {
+            print("[]")
+            return
+        }
+        if CommandLine.arguments.last == "app-server" {
+            try codexPeer()
+            return
+        }
         instructionsFollowTheSetting()
         providerPresetsResolveEndpoints()
         modelCatalogBuildsProviderRequests()
+        requestHeadersAreValidated()
         modelCatalogDecodesProviderResponses()
         modelCatalogSearchesWithoutRenderingEverything()
         exactMatchNamesOnlyAWholeModel()
@@ -118,6 +137,8 @@ struct AIProviderTests {
         brandsResolveFromModelIDs()
         requestBodiesCarryDocuments()
         codexProtocolFramesRoundTrip()
+        try await codexQueuedWritesRetire()
+        try await codexStopDropsQueuedWrites()
         installedCLIStreamsDecode()
         settingsPersistAndRepairSelections()
         installedModelLoadingPreferencePersists()
@@ -306,7 +327,7 @@ struct AIProviderTests {
         let openAI = AIRequestBody.make(
             turn,
             configuration: AIHTTPConfiguration(
-                provider: .openAI, baseURL: URL(string: "https://api.openai.com/v1")!,
+                provider: .openAICompatible, baseURL: URL(string: "https://api.openai.com/v1")!,
                 model: "gpt-5"))
         let catalog = (openAI["tools"] as? [[String: Any]])?.first
         expect(
@@ -497,7 +518,7 @@ struct AIProviderTests {
 
     static func providerPresetsResolveEndpoints() {
         let expected: [(AIProviderKind, String)] = [
-            (.openAI, "https://api.openai.com/v1/chat/completions"),
+            (.openAI, "https://api.openai.com/v1/responses"),
             (.anthropic, "https://api.anthropic.com/v1/messages"),
             (.gemini, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
             (.openRouter, "https://openrouter.ai/api/v1/chat/completions"),
@@ -566,6 +587,37 @@ struct AIProviderTests {
         expect(
             local?.url?.absoluteString == "http://localhost:11434/models",
             "a root endpoint appends one model path separator")
+        let headerOnly = try? AIModelDiscovery.query(
+            provider: .anthropic, baseURL: URL(string: "https://gateway.example.com")!,
+            apiKey: "", appTitle: "Tinycast",
+            headers: ["anthropic-version": "2024-01-01", "X-Tenant": "acme"]
+        ).request
+        expect(
+            headerOnly?.value(forHTTPHeaderField: "x-api-key") == nil,
+            "an empty key sends no credential header")
+        expect(
+            headerOnly?.value(forHTTPHeaderField: "Anthropic-Version") == "2024-01-01"
+                && headerOnly?.value(forHTTPHeaderField: "x-tenant") == "acme",
+            "custom headers are sent and replace a default of the same name in any case")
+    }
+
+    static func requestHeadersAreValidated() {
+        typealias Headers = AIRequestHeaders
+        expect(
+            (try? Headers.validated([
+                (" X-Tenant ", " acme\n"), ("", " "), ("Authorization", "Bearer\ttoken")
+            ])) == ["X-Tenant": "acme", "Authorization": "Bearer\ttoken"],
+            "names and values are trimmed, a blank row is dropped and a tab is kept")
+        expect(
+            (try? Headers.validated([("", "value")])) == nil
+                && (try? Headers.validated([("X Tenant", "acme")])) == nil,
+            "a missing name or one outside the HTTP token set is refused")
+        expect(
+            (try? Headers.validated([("X-Tenant", "a"), ("x-tenant", "b")])) == nil,
+            "a name repeated in another case is refused")
+        expect(
+            (try? Headers.validated([("X-Tenant", "a\r\nX-Injected: b")])) == nil,
+            "a value cannot carry a line break into another header")
     }
 
     static func modelCatalogDecodesProviderResponses() {
@@ -760,35 +812,56 @@ struct AIProviderTests {
         typealias Policy = AIConnectionKeyPolicy
 
         expect(
-            Policy.resolve(enteredKey: "  sk-new \n", connection: remote, saved: nil, hasStoredKey: false)
+            Policy.resolve(
+                enteredKey: "  sk-new \n", connection: remote, saved: nil, hasStoredKey: false,
+                hasHeaders: false)
                 == .store("sk-new"),
             "a typed key is stored trimmed")
         expect(
-            Policy.resolve(enteredKey: "sk-new", connection: moved, saved: remote, hasStoredKey: true)
+            Policy.resolve(
+                enteredKey: "sk-new", connection: moved, saved: remote, hasStoredKey: true, hasHeaders: false)
                 == .store("sk-new"),
             "a retarget that brings its own key replaces the old one")
         expect(
-            Policy.resolve(enteredKey: " ", connection: moved, saved: remote, hasStoredKey: true)
+            Policy.resolve(
+                enteredKey: " ", connection: moved, saved: remote, hasStoredKey: true, hasHeaders: false)
                 == .reject("Enter an API key for this endpoint — the saved key stays with the old one."),
             "a remote retarget without a key is refused, so the old key never reaches the new host")
         expect(
-            Policy.resolve(enteredKey: "", connection: local, saved: remote, hasStoredKey: true)
+            Policy.resolve(
+                enteredKey: "", connection: local, saved: remote, hasStoredKey: true, hasHeaders: false)
                 == .removeStored,
             "a retarget to loopback drops the key issued for the remote endpoint")
         expect(
-            Policy.resolve(enteredKey: "", connection: remote, saved: nil, hasStoredKey: false)
+            Policy.resolve(
+                enteredKey: "", connection: remote, saved: nil, hasStoredKey: false, hasHeaders: false)
                 == .reject("Enter an API key for this remote provider."),
             "a new remote connection needs a key")
         expect(
-            Policy.resolve(enteredKey: "", connection: local, saved: nil, hasStoredKey: false) == .keep,
+            Policy.resolve(
+                enteredKey: "", connection: local, saved: nil, hasStoredKey: false, hasHeaders: false)
+                == .keep,
             "a loopback endpoint saves without a key")
         expect(
-            Policy.resolve(enteredKey: "", connection: remote, saved: remote, hasStoredKey: true) == .keep,
+            Policy.resolve(
+                enteredKey: "", connection: remote, saved: remote, hasStoredKey: true, hasHeaders: false)
+                == .keep,
             "an unchanged endpoint keeps its saved key")
         expect(
-            Policy.resolve(enteredKey: "", connection: moved, saved: remote, hasStoredKey: false)
+            Policy.resolve(
+                enteredKey: "", connection: moved, saved: remote, hasStoredKey: false, hasHeaders: false)
                 == .reject("Enter an API key for this remote provider."),
             "with no saved key there is nothing to retarget, only a missing key")
+        expect(
+            Policy.resolve(
+                enteredKey: "", connection: remote, saved: nil, hasStoredKey: false, hasHeaders: true)
+                == .keep,
+            "request headers can authenticate a remote endpoint without a key")
+        expect(
+            Policy.resolve(
+                enteredKey: "", connection: moved, saved: remote, hasStoredKey: true, hasHeaders: true)
+                == .removeStored,
+            "a retarget authenticated by headers drops the old key rather than carry it over")
     }
 
     static func sseFramesSurviveSplits() {
@@ -1337,6 +1410,132 @@ struct AIProviderTests {
             "a compatible endpoint resolves the brand from the model id")
     }
 
+    static func codexQueuedWritesRetire() async throws {
+        let (client, root) = try await pausedCodexClient()
+        defer {
+            client.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+        var filling = false
+        let bulk = Task {
+            filling = true
+            return try await client.request(
+                method: "bulk", params: ["data": String(repeating: "x", count: 4_000_000)],
+                timeout: .seconds(5))
+        }
+        while !filling { await Task.yield() }
+        var queued = false
+        let cancelled = Task {
+            queued = true
+            return try await client.request(method: "cancelled")
+        }
+        while !queued { await Task.yield() }
+        cancelled.cancel()
+        do {
+            _ = try await cancelled.value
+            expect(false, "cancellation finishes the waiting request")
+        } catch {
+            expect(error is CancellationError, "cancellation preserves CancellationError")
+        }
+        do {
+            _ = try await client.request(method: "expired", timeout: .milliseconds(50))
+            expect(false, "a queued request can time out while stdin is blocked")
+        } catch CodexAppServerClient.ClientError.timedOut {
+        } catch {
+            expect(false, "a queued request reports its timeout: \(error)")
+        }
+        let alreadyCancelled = Task { try await client.request(method: "already-cancelled") }
+        alreadyCancelled.cancel()
+        _ = await alreadyCancelled.result
+        try Data().write(to: root.appendingPathComponent("resume"))
+        _ = try await bulk.value
+        _ = try await client.request(method: "barrier")
+        let received = try String(contentsOf: root.appendingPathComponent("received"), encoding: .utf8)
+        expect(!received.contains("cancelled"), "cancelled writes never reach the peer")
+        expect(!received.contains("expired"), "expired writes never reach the peer")
+        expect(received.contains("bulk\nbarrier"), "an in-flight frame finishes before the next write")
+    }
+
+    static func codexStopDropsQueuedWrites() async throws {
+        let (client, root) = try await pausedCodexClient()
+        defer {
+            client.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+        var filling = false
+        let bulk = Task {
+            filling = true
+            return try await client.request(
+                method: "bulk", params: ["data": String(repeating: "x", count: 4_000_000)])
+        }
+        while !filling { await Task.yield() }
+        var queued = false
+        let queuedWrite = Task {
+            queued = true
+            return try await client.request(method: "stopped")
+        }
+        while !queued { await Task.yield() }
+        client.stop()
+        _ = await bulk.result
+        _ = await queuedWrite.result
+        try Data().write(to: root.appendingPathComponent("resume"))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("exited").path),
+            ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        expect(
+            FileManager.default.fileExists(atPath: root.appendingPathComponent("exited").path),
+            "Stop closes stdin after the in-flight frame")
+        let received = try String(contentsOf: root.appendingPathComponent("received"), encoding: .utf8)
+        expect(!received.contains("stopped"), "Stop retires writes still waiting on the queue")
+    }
+
+    static func pausedCodexClient() async throws -> (CodexAppServerClient, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-provider-codex-\(UUID().uuidString)")
+        let client = CodexAppServerClient(workspace: root)
+        client.launchSettings = {
+            InstalledAILaunch(
+                commandPath: CommandLine.arguments[0], environment: ["TINYCAST_TEST_CODEX_ROOT": root.path])
+        }
+        try await client.start()
+        _ = try await client.request(method: "pause")
+        return (client, root)
+    }
+
+    static func codexPeer() throws {
+        guard let path = ProcessInfo.processInfo.environment["TINYCAST_TEST_CODEX_ROOT"] else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let root = URL(fileURLWithPath: path)
+        let log = root.appendingPathComponent("received")
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: log)
+        defer {
+            try? handle.close()
+            try? Data().write(to: root.appendingPathComponent("exited"))
+        }
+        while let line = readLine() {
+            guard let data = line.data(using: .utf8),
+                let request = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let method = request["method"] as? String
+            else { continue }
+            try handle.write(contentsOf: Data("\(method)\n".utf8))
+            if let id = request["id"] as? Int {
+                var reply = try JSONSerialization.data(withJSONObject: ["id": id, "result": [:]])
+                reply.append(0x0A)
+                try FileHandle.standardOutput.write(contentsOf: reply)
+            }
+            if method == "pause" {
+                while !FileManager.default.fileExists(atPath: root.appendingPathComponent("resume").path) {
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
+            }
+        }
+    }
+
     static func codexProtocolFramesRoundTrip() {
         let request = try? CodexAppServerProtocol.request(
             id: 7, method: "account/read", params: ["refreshToken": false])
@@ -1409,11 +1608,13 @@ struct AIProviderTests {
         expect(fresh.opensTo == .recent, "chat reopens on the recent conversation by default")
         expect(fresh.newChatAfter == .fiveMinutes, "the idle window defaults to five minutes")
         expect(fresh.toolRounds == .twentyFive, "a reply's tool rounds default to 25")
+        expect(!fresh.expandsReasoning, "thinking starts folded by default")
 
         fresh.retention = .week
         fresh.opensTo = .newConversation
         fresh.newChatAfter = .never
         fresh.toolRounds = .fifty
+        fresh.expandsReasoning = true
         let reopened = AISettingsStore(defaults: defaults)
         expect(reopened.toolRounds == .fifty, "the tool round cap persists")
         reopened.toolRounds = .unlimited
@@ -1433,6 +1634,7 @@ struct AIProviderTests {
         expect(reopened.retention == .week, "retention persists")
         expect(reopened.opensTo == .newConversation, "the open policy persists")
         expect(reopened.newChatAfter == .never, "Never persists rather than reading as the default")
+        expect(reopened.expandsReasoning, "Expand thinking persists")
     }
 
     static func onDeviceSelectionsRoundTripAndLead() {
@@ -1817,6 +2019,16 @@ struct AIProviderTests {
         expect(
             openCodeCatalog.map(\.acceptsImages) == [true, true, false],
             "OpenCode takes images only where the model's input does")
+        expect(
+            openCodeCatalog.allSatisfy(\.supportsTools),
+            "OpenCode retains advertised tool support")
+        let textOnlyModels = #"""
+            {"data":[{"id":"text","providerID":"local","capabilities":{"tools":false}},
+            {"id":"unknown","providerID":"local"}]}
+            """#
+        expect(
+            InstalledAIModel.openCodeCatalog(textOnlyModels).map(\.supportsTools) == [false, false],
+            "OpenCode models without advertised tool support do not offer tools")
         expect(
             InstalledAIModel.openCodeCatalog("Error: server failed to start").isEmpty,
             "an OpenCode answer that is not the model list yields no models")
