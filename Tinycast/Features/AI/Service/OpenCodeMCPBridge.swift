@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Network
 
@@ -297,9 +298,11 @@ final class OpenCodeMCPBridge {
     }
 
     private func startLegacy() async throws -> UInt16 {
+        let port = try Self.reservedLoopbackPort()
         let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
-            host: .ipv4(.loopback), port: .any)
+            host: .ipv4(.loopback), port: port)
         let listener = try NWListener(using: parameters)
         legacyListener = listener
         return try await withTaskCancellationHandler {
@@ -310,10 +313,9 @@ final class OpenCodeMCPBridge {
                     Task { @MainActor in
                         switch status {
                         case .ready:
-                            guard let port = listener.port?.rawValue else { return }
-                            self?.ready?.resume(returning: port)
+                            self?.ready?.resume(returning: port.rawValue)
                             self?.ready = nil
-                        case .waiting, .failed:
+                        case .failed:
                             self?.fail(URLError(.cannotConnectToHost))
                         default: break
                         }
@@ -441,5 +443,35 @@ final class OpenCodeMCPBridge {
                     connection.cancel()
                 })
         }
+    }
+
+    /// `requiredLocalEndpoint` with `.any` never leaves setup on macOS 15.
+    private static func reservedLoopbackPort() throws -> NWEndpoint.Port {
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard socket >= 0 else { throw URLError(.cannotConnectToHost) }
+        defer { Darwin.close(socket) }
+        var reuse: Int32 = 1
+        _ = Darwin.setsockopt(
+            socket, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        address.sin_port = 0
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else { throw URLError(.cannotConnectToHost) }
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(socket, $0, &length)
+            }
+        }
+        guard named == 0, let port = NWEndpoint.Port(rawValue: UInt16(bigEndian: address.sin_port))
+        else { throw URLError(.cannotConnectToHost) }
+        return port
     }
 }
