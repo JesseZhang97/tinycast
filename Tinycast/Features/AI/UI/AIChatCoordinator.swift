@@ -87,6 +87,21 @@ final class AIChatCoordinator {
         showWindow(applyingOpenPolicy: true)
     }
 
+    /// A link to one saved chat opens the window on it, whatever the open policy would pick.
+    func showChat(id: UUID) {
+        guard settings.aiEnabled else { return }
+        showWindow()
+        openChat(id: id)
+    }
+
+    /// A link's text joins the unsent line; sending it stays the reader's call.
+    func showWindow(appendingDraft text: String) {
+        guard settings.aiEnabled else { return }
+        showWindow(applyingOpenPolicy: true)
+        let chat = chats.window
+        chat.draft = chat.draft.isEmpty ? text : chat.draft + "\n" + text
+    }
+
     /// The window's views read these through the coordinator, never through `AppCore`.
     var history: ChatHistoryStore { core.chatHistory }
     var aiSettings: AISettingsStore { core.aiSettings }
@@ -151,6 +166,10 @@ final class AIChatCoordinator {
 
     func title(of chat: AIChatState) -> String {
         core.chatHistory.conversation(id: chat.session.id)?.displayTitle ?? chat.session.title
+    }
+
+    func copyDeepLink(toChat id: UUID) {
+        core.deepLinkCoordinator.copyLink(toChat: id)
     }
 
     func copyChat(id: UUID) {
@@ -281,7 +300,7 @@ final class AIChatCoordinator {
             let sent = chat.send(
                 address.rest, using: try provider(for: chat, scopedTo: address.slug),
                 model: model(for: chat), webSearch: webSearch(for: chat),
-                instructions: instructions, contextBudget: contextBudget(for: chat),
+                instructions: instructions(for: chat), contextBudget: contextBudget(for: chat),
                 toolScope: address.slug)
             // Named while the answer streams, so the sidebar has a title before the reply ends.
             if sent { nameIfNeeded(chat) }
@@ -300,7 +319,7 @@ final class AIChatCoordinator {
             chat.regenerate(
                 using: try provider(for: chat, scopedTo: scope),
                 model: model(for: chat), webSearch: webSearch(for: chat),
-                instructions: instructions, contextBudget: contextBudget(for: chat))
+                instructions: instructions(for: chat), contextBudget: contextBudget(for: chat))
         } catch {
             chat.report(error.localizedDescription)
         }
@@ -310,19 +329,32 @@ final class AIChatCoordinator {
         core.aiSettings.webSearchEnabled && capabilities(for: chat).webSearch
     }
 
-    private var instructions: String? {
+    private func instructions(for chat: AIChatState) -> String? {
         AIInstructions.compose(
             userPrompt: core.aiSettings.systemPrompt,
             isEnabled: core.aiSettings.systemPromptEnabled,
-            offersChoices: core.aiSettings.choicesEnabled)
+            offersChoices: core.aiSettings.choicesEnabled,
+            model: model(for: chat))
     }
 
-    /// A turn's route and its tools: a CLI with its own client is handed servers, others the loop.
     private func provider(for chat: AIChatState, scopedTo slug: String?) throws -> any AIProvider {
-        guard model(for: chat)?.runsItsOwnTools == true else {
-            return toolAware(try provider(for: chat), scopedTo: slug, in: chat)
+        if model(for: chat)?.runsItsOwnTools == true {
+            return try provider(for: chat, toolServers: toolServers(for: chat, scopedTo: slug))
         }
-        return try provider(for: chat, toolServers: toolServers(for: chat, scopedTo: slug))
+        let tools = capabilities(for: chat).tools ? tools(for: chat, scopedTo: slug) : []
+        guard !tools.isEmpty else { return try provider(for: chat) }
+        let chatID = chat.session.id
+        let session = AIToolSession(
+            tools: tools, maxCalls: core.aiSettings.toolRounds.limit
+        ) { [mcp = core.mcpCoordinator] call in
+            await mcp.invoke(call, in: chatID)
+        }
+        if case .openCode? = model(for: chat) {
+            return try provider(for: chat, toolSession: session)
+        }
+        return AIToolLoopProvider(
+            base: try provider(for: chat), tools: session.tools, maxRounds: session.maxCalls,
+            invoke: session.invoke)
     }
 
     /// The same narrowing as `tools(for:scopedTo:)`, for a client that starts its own servers.
@@ -335,20 +367,6 @@ final class AIChatCoordinator {
             await mcp.toolServers(scopedTo: slug).filter { !excluded.contains($0.handle) }
         } consent: { call in
             await mcp.permit(call, in: chatID)
-        }
-    }
-
-    /// Only chat wraps a route in the tool loop; a text rewrite has nothing to call.
-    private func toolAware(
-        _ provider: any AIProvider, scopedTo slug: String?, in chat: AIChatState
-    ) -> any AIProvider {
-        let tools = tools(for: chat, scopedTo: slug)
-        guard capabilities(for: chat).tools, !tools.isEmpty else { return provider }
-        let chatID = chat.session.id
-        return AIToolLoopProvider(
-            base: provider, tools: tools, maxRounds: core.aiSettings.toolRounds.limit
-        ) { [mcp = core.mcpCoordinator] call in
-            await mcp.invoke(call, in: chatID)
         }
     }
 
@@ -402,10 +420,10 @@ final class AIChatCoordinator {
         case .codex?: return .codex
         case .claude?: return .claudeCommand
         case .openCode(let model, _)?:
-            let images = core.installedAI.status(for: .openCode).models
-                .contains { $0.id == model && $0.acceptsImages }
+            let entry = core.installedAI.status(for: .openCode).models.first { $0.id == model }
             return AIModelCapabilities(
-                images: images, documents: false, webSearch: false, tools: false)
+                images: entry?.acceptsImages == true, documents: false, webSearch: false,
+                tools: entry?.supportsTools == true)
         case .grok?, .cursor?:
             return .none
         case .api(let connection, let model, _)?:
@@ -590,7 +608,8 @@ final class AIChatCoordinator {
     }
 
     private func provider(
-        for chat: AIChatState, toolServers: AIToolServerSession? = nil
+        for chat: AIChatState, toolServers: AIToolServerSession? = nil,
+        toolSession: AIToolSession? = nil
     ) throws -> any AIProvider {
         guard let selection = model(for: chat) else {
             throw AIProviderError.unavailable(String(localized: "Choose a default AI model in Settings."))
@@ -598,7 +617,7 @@ final class AIChatCoordinator {
         return try AIProviderFactory.make(
             selection: selection, settings: core.aiSettings,
             subscription: core.chatGPTSubscription, installedAI: core.installedAI,
-            toolServers: toolServers)
+            toolServers: toolServers, toolSession: toolSession)
     }
 
     /// Tinycast runs a local server itself only while some live chat's route cannot.

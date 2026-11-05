@@ -3,24 +3,26 @@
 This branch carries the smallest practical compatibility delta on top of Tinycast's upstream `main`.
 It builds with Xcode 26 and the current SDK while retaining a macOS 15 deployment target.
 
+The fork's `main` is the macOS 15 working branch. It is not an upstream mirror: never fast-forward
+or push upstream history onto it.
+
 ## Syncing upstream
 
-Keep the fork's `main` aligned with upstream and merge it into this branch. A release-aligned
-sync fast-forwards `main` to the latest stable tag instead of `upstream/main`:
+Cut a `sync/` branch from `main` and merge the upstream stable tag into it. Never rebase or rewrite
+the merge:
 
 ```sh
 git fetch upstream --tags
 git switch main
-git merge --ff-only v0.12.1   # or upstream/main
-git push origin main
-git switch macos15
-git merge main
+git switch -c sync/v0.12.8
+git merge --no-ff v0.12.8
 ./Scripts/verify-macos15.sh
 ```
 
-Resolve conflicts only on `macos15`; never add compatibility changes to the mirror branch. A new
+Resolve conflicts by keeping upstream's code and re-applying the compatibility pattern. A new
 availability error usually means upstream adopted another macOS 26 API. Put its fallback behind one
-`#available(macOS 26.0, *)` boundary and keep the modern path unchanged.
+`#available(macOS 26.0, *)` boundary and keep the modern path unchanged. Open a PR from the `sync/`
+branch into `main`.
 
 ## Compatibility boundaries
 
@@ -28,6 +30,7 @@ availability error usually means upstream adopted another macOS 26 API. Put its 
   border and elevation fallbacks from `Theme.swift`. Panel backdrops go through `GlassEffectView`,
   which uses `NSVisualEffectView` on macOS 15. Call sites use `frosted` / `frostedMenu` /
   `frostedPanel` / `glassButtonStyle()`, never a raw `.glassEffect` or `.buttonStyle(.glass)`.
+  Compact-bar morphing goes through `GlassGrouping`, which is `GlassEffectContainer` on macOS 26.
 - Apple Intelligence uses Foundation Models and remains available only on macOS 26. Other configured
   AI providers continue to work on macOS 15. Status goes through `AIProviderFactory.appleIntelligenceStatus()`,
   which reports `.unsupportedOS` below macOS 26. Type checks go through
@@ -36,6 +39,9 @@ availability error usually means upstream adopted another macOS 26 API. Put its 
   on macOS 15 rather than crashing or preventing the rest of Quick Actions from working.
 - Typed `NotificationCenter` observers (`addObserver(of:for:)`, `DidTerminateApplicationMessage`)
   are macOS 26-only. macOS 15 uses `addObserver(forName:object:queue:)` with the same names.
+- `NetworkListener` is macOS 26-only. MCP OAuth and the OpenCode MCP bridge keep the modern path
+  behind one availability boundary and use `NWListener` below macOS 26. A seam a standalone harness
+  exercises uses `ProcessInfo`, because those harnesses compile at the 26 SDK floor.
 - The release build is universal because macOS 15 still runs on Intel.
 
 ## Verification

@@ -16,8 +16,16 @@ Tinycast keeps itself up to date, and there's nothing to set up.
 
 If you choose **Later**, Tinycast stops offering that version. It still offers newer ones.
 
+The first time the new version opens, it shows **Updated to Tinycast** and the version number.
+
 **Check for Updates** always looks for a newer version, including one you skipped. It's in the
 launcher, the Tinycast menu bar menu and **Settings → About**.
+
+## Turning off automatic checks
+
+**Settings → General → Automatically check for updates** is on by default. Turn it off, and Tinycast
+stops checking in the background and never opens the update window by itself. **Check for Updates**
+still works.
 
 ## It waits until you're not busy
 
@@ -44,7 +52,7 @@ exactly as it was.
 - **The signature must show that the download is Tinycast**, signed the same way as the copy you're
   running.
 - The app identifier and version must match what's expected.
-- Tinycast never runs `xattr` or asks for an administrator password. If it can't write to
+- Tinycast never asks for an administrator password. If it can't write to
   `/Applications`, it tells you instead of working around it.
 
 Updating never changes your settings, clipboard history, notes, snippets or anything else you

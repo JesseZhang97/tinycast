@@ -10,7 +10,8 @@ enum AIProviderFactory {
         installedAI: InstalledAIManager,
         keyStore: KeychainSecretStore = .aiAPIKeys,
         guardrails: AppleIntelligenceGuardrails = .standard,
-        toolServers: AIToolServerSession? = nil
+        toolServers: AIToolServerSession? = nil,
+        toolSession: AIToolSession? = nil
     ) throws -> any AIProvider {
         switch selection {
         case .appleIntelligence:
@@ -49,7 +50,8 @@ enum AIProviderFactory {
             guard settings.enabledInstalledProviders.contains(.openCode) else {
                 throw AIProviderError.unavailable(String(localized: "OpenCode is disabled in AI Settings."))
             }
-            return try installedAI.provider(kind: .openCode, model: model, effort: effort)
+            return try installedAI.provider(
+                kind: .openCode, model: model, effort: effort, toolSession: toolSession)
         case .cursor(let model, let effort):
             guard settings.enabledInstalledProviders.contains(.cursor) else {
                 throw AIProviderError.unavailable(String(localized: "Cursor is disabled in AI Settings."))
@@ -76,7 +78,15 @@ enum AIProviderFactory {
                 throw AIProviderError.unavailable(
                     String(localized: "The API key could not be read from Keychain."))
             }
-            guard AIEndpointPolicy.isLoopback(connection.baseURL) || !key.isEmpty else {
+            let headers: [String: String]
+            do {
+                headers = try KeychainSecretStore.aiRequestHeaders.values(for: connection.id)
+            } catch {
+                throw AIProviderError.unavailable(
+                    String(localized: "The request headers could not be read from Keychain."))
+            }
+            guard AIEndpointPolicy.isLoopback(connection.baseURL) || !key.isEmpty || !headers.isEmpty
+            else {
                 throw AIProviderError.unavailable(String(localized: "Add an API key in Settings."))
             }
             let effort = connection.offeredEffort(savedEffort, for: model)
@@ -84,7 +94,8 @@ enum AIProviderFactory {
                 configuration: AIHTTPConfiguration(
                     provider: connection.provider, baseURL: baseURL, model: model, effort: effort,
                     disablesThinking: effort == AIConnection.ReasoningOptions.noEffort
-                        && connection.takesThinkingField),
+                        && connection.takesThinkingField,
+                    headers: headers),
                 apiKey: key)
         }
     }

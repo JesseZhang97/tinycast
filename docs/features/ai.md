@@ -39,25 +39,31 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   fallback for a path that was set: falling back would run another copy and hide the mistake the path
   was set to fix.
 - **A reader's variable never replaces one Tinycast sets.** `InstalledAIKind.managedEnvironment` is
-  what keeps a tool inside the chat — OpenCode's deny-all configuration, Claude's account MCP switch —
+  what keeps a tool inside the chat, including OpenCode's scoped permissions and Claude's account MCP switch,
   and `InstalledAILaunch.inherited(for:)` drops a reader's variable of the same name, along with
   `NO_COLOR` and the `TC_MCP_` names that carry MCP secrets to Codex. Names are stored in
   `aiInstalledOverrides` and values in the login Keychain (`KeychainSecretStore.installedAIEnvironment`),
   read only for a tool that has variables.
-- **Every request carries Tinycast's own preamble, and the user's text goes after it.**
+- **Every off-device request carries Tinycast's own preamble, and the user's text goes after it.**
   `AIInstructions.compose` builds `AIRequest.instructions`: a fixed preamble that tells the model
   where it is running and what the app can do, then whatever Settings → AI holds. The preamble
   keeps the model a general-purpose assistant — the app facts are reference for when the user asks,
   never a scope limit — and asks for honest comparisons; it does not instruct the model to favour
   Tinycast over anything else. It is not shown in the pane, and `AIPreamble.swift` holds the only
   copy of it — edit the prompt there, not here. `compose` returns `nil` when the user has turned
-  the system prompt off, and every transport drops a nil instruction, so a turn then carries none.
+  the system prompt off or the chat is on Apple Intelligence, and every transport drops a nil
+  instruction, so a turn then carries none. The on-device model is small enough that any standing
+  instruction — the preamble, the choices request or the user's own text — steers every answer
+  toward it, so that route always gets the conversation alone.
 - **API keys live only in the login Keychain.** `AIConnection` persists the provider, endpoint and
   model identifiers in `UserDefaults`; it never contains a key. Keys are addressed by connection UUID
   through `KeychainSecretStore.aiAPIKeys`, and never enter logs, errors or settings backups. A key is issued for one
   endpoint and never follows a connection retargeted at another — change the provider or base URL and
   both model discovery and Save ask for a new key, rather than introduce the saved one to a host it
-  was never meant to reach (`AIEndpointPolicy.sameDestination`).
+  was never meant to reach (`AIEndpointPolicy.sameDestination`). A connection's custom request
+  headers are one JSON item per connection in `KeychainSecretStore.aiRequestHeaders`. They are visible
+  rows in the editor rather than a hidden saved value, so they are saved with whatever endpoint the
+  connection is saved with, and removing a connection deletes them with its key.
 - **Remote endpoints require HTTPS.** Plain HTTP is accepted only for `localhost`, `127.0.0.1` and
   `::1`, where a key is optional, and any other scheme is rejected outright — a loopback host does
   not excuse `ftp://`. `AIEndpointPolicy` is the one place that decides this.
@@ -79,14 +85,17 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   effort. A pick also moves the app default, which is only what a *new* chat starts on. A chat whose
   route was removed in Settings answers on the default rather than failing
   (`AIChatCoordinator.model(for:)`), and keeps its stored pick in case the route comes back.
-- **Reasoning is shown, folded, and never resent.** `AIStreamEvent.reasoning` carries the text a route
+- **Reasoning is shown, folded, and never rebuilt from history.** `AIStreamEvent.reasoning` carries the text a route
   shares — OpenAI-shaped `reasoning` / `reasoning_content` / `reasoning_details`, Anthropic and
   Claude-CLI `thinking_delta`, Codex's reasoning summary — into `ChatMessage.reasoning`, a list of
   `ChatReasoning` blocks. Thinking that resumes after answer text opens a new block pinned at that
   text offset, so `segments` places it where it happened, like a search or a tool call; each block
   is timed until the answer resumes. The transcript folds each under "Thought for Ns", drawing
   `ChatReasoning.displayText` — the stored text without the blank lines a route closes it with;
-  `message_thinking` keeps them; `requestMessages` never sends them back. A route that only says
+  `message_thinking` keeps them; `requestMessages` never sends them back. Settings → AI → Expand
+  thinking (`aiExpandsReasoning`, off by default) starts every fold open, so thinking streams in
+  the open; it rides the `chatExpandsReasoning` environment value from each transcript's host, and a
+  fold the reader has clicked keeps their choice over it. A route that only says
   it is thinking still just shows "Thinking…". How much there is to read is the route's call:
   Claude streams full summaries, while Grok's CLI sends a line or two in the clear and the rest of
   its reasoning encrypted, so a Grok fold is short by design, not by truncation. An OpenAI-shaped
@@ -116,8 +125,8 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   cannot call tools shows the menu disabled and says why.
 - **A reply can end on choices, and a choice is only ever a message.** The preamble lets the model
   close a reply with a fenced `choices` block, one option per line. `ChatChoices.split` lifts the
-  fence out of the prose (an unclosed one mid-stream too, so it never flashes as code). Apple's
-  on-device model tends to drop the fence and write a bare `choices` line over a list, so a
+  fence out of the prose (an unclosed one mid-stream too, so it never flashes as code). A small
+  model tends to drop the fence and write a bare `choices` line over a list, so a
   label on its own line with nothing but list items after it, to the reply's end, counts too. It
   sometimes wraps that label in a bare fence of its own and adds a stray one after the list, so the
   bare fence right on the label and any fence closing or trailing the list go with them, and no
@@ -126,8 +135,8 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   leading-aligned `ChatFlowLayout`: in the window they rise out of the composer, sitting on its top edge until the reader starts typing; in Quick AI they close the
   transcript. A click sends the option as the reader's next message, through the same `send` a
   typed one takes. Older replies lose their chips, since only the last question is still open. It is text in, text out, so it
-  works on every route — and not at all with the system prompt switched off, which drops the
-  preamble that describes it. Settings → AI → Suggested replies (`aiChoices`, on by default) turns
+  works on every route but Apple Intelligence — and not at all with the system prompt switched off,
+  which drops the preamble that describes it. Settings → AI → Suggested replies (`aiChoices`, on by default) turns
   them off on purpose: `AIInstructions.compose` leaves `AIPreamble.choices` out, so no turn asks for
   them, and neither surface draws chips. A fence a model writes anyway is still lifted out of the
   prose.
@@ -139,11 +148,13 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
 - **The on-device route is configured by having a Mac.** `.appleIntelligence` takes no key, opens no
   socket and names no endpoint, so the Keychain, HTTPS and ephemeral-session rules below have nothing
   to bind to — the Settings pane must never grow a credential field for it. It is text-only and
-  offers no web search, the preamble still rides ahead of every turn, and history is bounded to
+  offers no web search, no instructions ride ahead of its turns, and history is bounded to
   `AppleIntelligence.contextBudget` rather than the cloud routes' ~100 KB because the on-device window
   holds a prompt and its reply together. Availability is asked for each time, never cached at launch:
   the model finishes downloading mid-session, and reading it inside a view body leaves SwiftUI
-  observing the framework's own state.
+  observing the framework's own state. `modelNotReady` is also what a Mac whose profile switches
+  Apple Intelligence off reports, so its copy says only that the model is not available and never
+  promises a download.
 - **Apple Intelligence requires macOS 26.** Foundation Models does not exist on macOS 15, so the
   compatibility branch reports that requirement while leaving installed and API providers available.
 - **An unavailable on-device model is reported, never rerouted.** Fall-forward exists for a route the
@@ -173,6 +184,10 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   rewrites the reader's own selected text and has nothing to call. A turn's tool messages stay inside
   the loop — what the transcript keeps is a `ChatToolUse` record, pinned at a text offset like a
   search, so `boundedContext` can never separate a stored call from its result.
+  The direct OpenAI API uses Responses. Its complete output items, including encrypted reasoning,
+  assistant phase and function-call IDs, travel with the next tool round inside `AIMessage.responseItems`.
+  They count against the turn's history ceiling and are discarded when the turn ends. Responses requests
+  set `store: false`; no response ID or server-side conversation becomes part of saved chat state.
 - **Every HTTP request uses a private ephemeral `URLSession` with no URL cache.** Provider traffic must
   not create a second credential or response cache on disk.
 - **A refusal shows what the provider said.** `HTTPAIProvider` reads a non-200 body before the turn
@@ -184,8 +199,9 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   only a message that is still whole. The connection's key, bearer tokens and key-shaped strings are
   replaced with `[redacted]`, and then the message is cut at `messageLimit` (600 characters). A key
   under eight characters is redacted only as a whole word, so it cannot eat into a longer one; a
-  local server's placeholder key is redacted like any other. A mid-stream error is
-  treated the same way: the decoder is handed the key, an Anthropic `error` event shows its message
+  local server's placeholder key is redacted like any other. Custom header values are redacted the
+  same way. A mid-stream error is
+  treated the same way: the decoder is handed the key and header values, an Anthropic `error` event shows its message
   under its line, and an OpenAI-compatible one reads through `metadata.raw` too, or says the provider
   stopped the response when there is no sentence to show.
 - **`Model/` stays Foundation-only.** `ai-provider-test` compiles the shipped provider models and pins
@@ -193,7 +209,7 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   CLI routes' MCP launch encodings. Request
   bodies are `AIRequestBody`'s, in `Model/`, precisely so a wrong shape fails a harness rather than a
   conversation.
-- **Grok, OpenCode and Cursor are text transports, not agents, and so is Claude with no server to
+- **Grok and Cursor are text transports, not agents, and so is Claude with no server to
   run.** Claude runs one turn with no tools, browser integration, slash commands or persisted
   session — but never `--bare`, which reads neither
   OAuth nor the keychain and so refuses the very sign-in this route reuses. Given servers by
@@ -206,8 +222,12 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   Grok runs with `--deny *`,
   `dontAsk` permissions and a workspace sandbox, and never `--always-approve`, so a user's always-approve
   config cannot arm tools for this route. OpenCode 2 runs `--standalone`, so its private server
-  takes Tinycast's inline configuration, as a `tinycast` agent whose trailing deny-all rule drops
-  every tool from the request, with sharing and snapshots off and a private working directory. Cursor runs `agent -p --mode ask` with `--trust` against
+  takes Tinycast's inline configuration, as a `tinycast` agent with sharing and snapshots off and
+  a private working directory. Its deny-all rule drops every built-in and user-configured tool.
+  A chat with MCP enabled adds exact allow rules for a private per-turn loopback bridge, with
+  `codemode: false` so those tools do not require enabling `execute`. The bridge offers only the
+  chat's selected tools and routes calls through Tinycast's existing consent and execution path.
+  Cursor runs `agent -p --mode ask` with `--trust` against
   Tinycast's private workspace and never `--force` / `--yolo` / `--approve-mcps`; ask mode blocks edits.
   Each deletes the session or chat it created once the child exits, and Tinycast never reaches into the
   user's own config to do it. **Only Claude keeps the user's MCP servers out of the process**, through
@@ -218,8 +238,9 @@ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
   because their configs merge with no opt-out; what refuses the call is `--deny *` for Grok,
   the `tinycast` agent's deny-all rule for OpenCode and withheld MCP approval for Cursor. Cursor's is the only one resting
   on an approval prompt rather than an explicit deny, which is why its Providers row says so and the
-  others do not. That is also why none of the three may be handed a server: there is no way to offer
-  one without offering the reader's own. None of these routes offer web search, and only Claude and
+  others do not. Grok and Cursor are never handed a server. OpenCode's exact allow rules name only
+  the turn's randomly named, authenticated bridge, never the user's servers. None of these routes
+  offer web search, and only Claude and
   OpenCode take images: every Claude turn is one `--input-format stream-json` user message, the newest
   question's pictures as base64 `image` blocks beside the framed prompt. OpenCode gets the same
   pictures as private `0600` files in the workspace, one `--file` each, and only for a model whose
@@ -324,7 +345,7 @@ as `.codex`, so an existing selection survives the rename.
 | Grok | installed `grok --prompt-file` | user's Grok login |
 | OpenCode | installed `opencode run --standalone` (OpenCode 2) | providers already configured in OpenCode |
 | Cursor | installed `agent -p --mode ask` | user's Cursor login |
-| OpenAI API | OpenAI Chat Completions | `https://api.openai.com/v1` |
+| OpenAI API | OpenAI Responses | `https://api.openai.com/v1` |
 | Anthropic Claude | Anthropic Messages | `https://api.anthropic.com` |
 | Google Gemini | Gemini's OpenAI-compatible API | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | OpenRouter | OpenAI-compatible | `https://openrouter.ai/api/v1` |
@@ -334,6 +355,17 @@ The base URL stays editable for every preset because gateways and organization p
 destinations. `AIHTTPConfiguration.endpointURL` accepts a complete endpoint or appends the transport's
 completion path. Gemini requests identify Tinycast through `x-goog-api-client`; OpenRouter requests
 carry the app title.
+
+Only the OpenAI preset directed at `api.openai.com` uses Responses. An OpenAI preset pointed at a
+gateway, and the OpenAI Compatible preset at any address, retain Chat Completions. A saved direct
+OpenAI `/chat/completions` endpoint resolves to `/responses` without rewriting the saved connection.
+Model discovery also accepts a full `/responses` endpoint and still requests `/models`.
+
+A connection can also carry custom request headers for gateways that route or authenticate by header.
+They go to model discovery and every chat request after the route's own headers, so a custom name
+replaces a default regardless of case. With headers set, the API key is optional and an empty key
+sends no credential header. `AIRequestHeaders.validated` drops blank rows and refuses a name outside
+the HTTP token set, a name repeated in any case, and a value with a line break or control character.
 
 Each connection has an ordered, deduplicated list of exact model identifiers. While its editor is open,
 Tinycast asks the configured provider for the models available to the entered key and uses the result
@@ -345,7 +377,7 @@ manually. A gateway can also list an incomplete catalog under any preset, so sea
 identifier whenever no loaded model is named by it exactly, even beside partial matches; Return still
 adds only an exact catalog match, so a typed prefix never becomes a stored identifier. Tinycast does
 not ship or guess an API catalog that can become stale. Codex gets its models and reasoning efforts
-from `model/list`; OpenCode gets identifiers, variants and input modalities from its server's
+from `model/list`; OpenCode gets identifiers, variants, input modalities and tool support from its server's
 `model.list`, through `opencode api GET /api/model --standalone`, and an OpenCode older than 2 fails
 the check with a message rather than reading as signed out. Claude answers an `initialize` control request — written to a
 stream-json `-p` run that then gets no prompt, so no model is called — with its own `/model` list;
@@ -384,6 +416,14 @@ into answer text. `AIThinkTagDecoder` holds back a tag split across deltas, drop
 between the closing tag and the answer, and flushes an unclosed block as reasoning. Anthropic
 system messages are lifted into its top-level `system` field; the other HTTP routes keep system
 messages in the OpenAI message array.
+
+`AIResponsesDecoder` handles Responses text and refusal deltas, thinking activity, usage and
+terminal failures behind the same SSE parser. It releases function calls only after
+`response.completed`, using the complete `response.output` items rather than partially streamed
+arguments. A failed, incomplete or truncated response cannot release a tool call. Tool definitions
+set `strict: false` so the MCP server's optional parameters retain their existing meaning.
+The direct OpenAI route keeps the model's default reasoning and does not request visible summaries;
+its encrypted reasoning items are replayed between tool rounds independently of the thinking indicator.
 
 `AIProviderFactory` resolves the selection, validates an API endpoint, reads an API key at the last
 possible moment and returns `AppleIntelligenceProvider`, `HTTPAIProvider`, `CodexInstalledProvider`
@@ -440,7 +480,7 @@ The `AI Chat` command (`command:ai-chat-window`, `HotKeyAction.command(.aiChat)`
 `AppWindowController` window owned by `AIChatCoordinator`, autosaved as `AIChatWindow`, and closes it
 again when it is already key, the way Escape does. It is built the way Settings is — an
 `AIChatSplitViewController` with a native sidebar item, here collapsible, and a unified toolbar whose title is the open chat's — so it takes the system's own sidebar, toolbar and
-menus rather than the palette's scrim. `AIChatWindowChrome` owns the toolbar — the sidebar toggle
+menus rather than the palette's glass surface. `AIChatWindowChrome` owns the toolbar — the sidebar toggle
 and New Chat as two round buttons at the sidebar's trailing edge, then Find in Chat and Actions
 alone at the window's — the title, and one key monitor for ⌘V, ⌘B, ⌃⇥ / ⌃⇧⇥, ⌘F, ⌘G / ⇧⌘G, ⌘K
 and the Actions menu's own chords, and dies with the window.
@@ -641,7 +681,10 @@ window, and every chat action either surface sends — is the nineteenth feature
 - With Apple Intelligence available and nothing else configured, opening chat or the AI pane leaves
   the selection reading **Apple Intelligence** without asking for anything.
 - With it switched off in System Settings, the pane says so and chat says so; neither moves the
-  reader onto a configured API connection.
+  reader onto a configured API connection. Both the AI pane and the providers panel offer Open System
+  Settings…, which lands on the Apple Intelligence & Siri pane.
+- On a Mac that does not support Apple Intelligence, its toggle in the providers panel reads off and
+  cannot be changed, and no Open System Settings… button appears.
 - Install and sign in to each supported command outside Tinycast, choose one of its discovered models,
   and confirm Chat and each model-backed Quick Action use it without showing a credential field.
 - Sign out of an installed command, press Check Again, and confirm its models leave both pickers while
@@ -695,6 +738,7 @@ window, and every chat action either surface sends — is the nineteenth feature
   think tags across content and SSE splits, persistence repair,
   Codex framing, on-device routing, the two MCP launch encodings and the two consent channels, the
   shown-model and switched-off-route rules, and a tool's override from settings to launch),
+  `opencode-mcp-test` (bridge authentication, scoped catalog, exact permissions, calls and limits),
   `syntax-highlight-test` (every grammar's tokens, language aliases, the size limit, and that every
   prefix of a streaming block scans in order and inside its own bounds),
   `ai-chat-test` (`ChatSession`, `MarkdownBlock` with its math delimiters, LaTeX subset and
@@ -753,6 +797,10 @@ next turn wants a different one — a server added or removed, or an OAuth token
 is not a turn and keeps whatever is already running. The account survives the relaunch because it
 was never the process's to begin with. See [MCP](mcp.md) for what goes on the launch line.
 
+Stdin writes run on a serial queue so a blocked server leaves the UI and request timeouts responsive.
+Cancelling, timing out or stopping a request releases its queued payload before the write begins.
+An in-flight frame finishes whole so the following JSON line remains readable.
+
 `CodexTurnRunner` is the generation half behind `CodexInstalledProvider`.
 
 It keeps an ephemeral thread per conversation while the helper stays running, preserving the web
@@ -799,6 +847,16 @@ Every other turn finishes on its own completion frame; the cleanups run detached
 housekeeping never holds the composer shut.
 Cancellation terminates the child process; only one installed-CLI turn can own a runner at a time.
 
+For OpenCode chat tools, `AIChatCoordinator` supplies an `AIToolSession` rather than a second
+`AIToolLoopProvider`. `OpenCodeMCPBridge` binds an ephemeral IPv4 loopback port for that turn and
+requires a random bearer credential carried only in `OPENCODE_CONFIG_CONTENT`. It rejects browser
+origins and offers only initialize, ping, tool listing and tool calls. Short indexed aliases keep
+OpenCode's prefixed tool names under provider limits while retaining the original tool routing and
+transcript labels. Calls run serially through Tinycast so permission dialogs cannot compete. The
+reader's round setting caps calls, and the normal tool-result size budgets still apply. Completion,
+failure and cancellation stop the listener and its pending calls. Rewrites and title requests get no
+tool session and retain the deny-all configuration.
+
 ## Web search and attachments
 
 `AIRequest.webSearch`, `AIMessage.images` and `AIMessage.documents` are provider-neutral; each
@@ -814,7 +872,7 @@ transport code at all.
 | Codex | thread-scoped `web_search` config | `image` input part | never — the app-server takes no document part | Tinycast's servers, added as launch overrides; the reader's own are disabled by name |
 | Claude command | never | base64 `image` block in its stream-json user message | never | Tinycast's servers, through `--strict-mcp-config` and a private config file — an empty one when there are none, and neither flag under a managed MCP policy |
 | Grok command | never | never | never | the global config still loads — `--deny *` refuses the call |
-| OpenCode command | never | a private file per picture, through `--file`, only for models whose catalog lists `image` input | never | the global config still loads — the `tinycast` agent's deny-all rule drops every tool |
+| OpenCode command | never | a private file per picture, through `--file`, only for models whose catalog lists `image` input | never | selected Tinycast tools through a per-turn authenticated loopback bridge; all other tools denied |
 | Cursor command | never | never | never | the global config still loads — ask mode and withheld approval refuse the call |
 | OpenRouter | `plugins: [{id: "web"}]` — OpenRouter's own layer, any model | `image_url` part, only for models whose catalog lists the `image` modality | never yet — its catalog publishes a `file` modality Tinycast does not read | `tools` + `role: "tool"` turns |
 | OpenAI | not offered | `image_url` part, assumed supported | `file` part with `filename` and a `file_data` data URL | `tools` + `role: "tool"` turns |
@@ -937,7 +995,7 @@ control (`AIProviderTab`), and the chosen page is kept from one provider to the 
 - **Overview** reports an installed tool as checking, ready, sign-in required, missing or failed,
   with the account, Codex's usage windows and the command that ran. It never contains a credential
   field: installation and sign-in happen in each command's own flow. For a connection it shows the
-  provider, base URL and whether a key is stored; **Edit…** in the header opens the connection
+  provider, base URL, whether a key is stored and whether request headers are; **Edit…** in the header opens the connection
   editor, which remains the explicit Keychain-backed path.
 - **Models** is the checklist behind the second invariant above, with Show All, Hide All and a
   filter once a route offers more than eight. The rows are an `NSTableView` in one `Form` row

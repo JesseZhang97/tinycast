@@ -16,3 +16,17 @@ struct GlassEffectView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
+
+/// Groups glass shapes so they can morph on macOS 26; a no-op container below that.
+struct GlassGrouping<Content: View>: View {
+    var spacing: CGFloat = 0
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content() }
+        } else {
+            content()
+        }
+    }
+}

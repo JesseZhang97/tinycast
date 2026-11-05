@@ -20,7 +20,8 @@ compilation of its 2-bit weights; Ultra's encoder and both variants' decoder/joi
   belong only to `DictationCoordinator`; no recording starts merely by launching Tinycast or opening
   Settings.
 - The enable switch is consent. It explains microphone and Accessibility access before enabling,
-  and is excluded from backups so importing settings cannot arm a global recording shortcut.
+  and, like every Dictation preference, is excluded from backups so importing settings cannot arm
+  a global recording shortcut.
 - Microphone status appears in Permissions and the Dictation pane. Neither pane prompts on display;
   only a user action requests access, while revoked access is refreshed from macOS.
 - `HotKeyAction.dictation` uses the shared recorder and conflict handling. Toggle mode accepts any
@@ -48,13 +49,25 @@ compilation of its 2-bit weights; Ultra's encoder and both variants' decoder/joi
   right at up to 30 frames per second.
   Reduce Motion pauses the processing timeline; closing the panel releases its hosting view so no
   animation continues while hidden.
-- Dictation fades the default output's software volume down by about 90% from shortcut press, then restores
+- Dictation fades the default output's software volume down by about 90% from shortcut press, or from
+  the start cue when Play sounds is on, then restores
   it on completion, cancellation and normal quit. An unsupported output is left untouched, as is a
   volume the user changes during capture. Before each fade step, a bundle-ID Application Support
   file records the device UID, original volume and the values before and after that step.
   Relaunch restores the original device only if its volume still matches that record, including
   when Dictation is disabled. An unavailable device keeps its record for a later attempt; new ducking
   waits for that recovery. File writes run off-main and finish before the hardware changes.
+- Play sounds is on by default. When on, macOS's `dt-begin.caf` plays on the microphone's first samples
+  and `dt-confirm.caf` when recording stops (release, toggle, Return or the length limit); cancelling
+  stays silent. These are internal resources in `AssistantServices.framework`, not bundled audio;
+  their location is undocumented, and a missing sound is silently skipped without blocking dictation.
+  A Bluetooth headset drops output while it switches to its microphone, sometimes after the first
+  samples arrive, so with a Bluetooth microphone the start cue waits half a second more. With sounds
+  on, for any microphone, ducking starts with the start cue instead of at the press, and never for a
+  session cancelled meanwhile. On stop the volume is restored at once instead of faded, so the cue
+  plays at full volume before the microphone closes and a headset switches back. Ducking is device-wide, so
+  media at full volume can mask the start cue. Through speakers a cue can reach the recording; it is
+  not removed.
 - The microphone, waveform, permissions and insertion stay in Tinycast. Model loading, audio
   features and decoding run in `Tinycast Dictation` (`Tinycast Dev Dictation` in Debug), started
   only for transcription. Main-app state never retains Core ML models or imports the adapters.
@@ -103,7 +116,9 @@ compilation of its 2-bit weights; Ultra's encoder and both variants' decoder/joi
 
 ## Validation
 
-`dictation-field-test` checks composer switching and teardown, scoped cancellation and delayed insertion
+`dictation-cue-test` checks system resource paths, playback ordering and missing sounds without audio output.
+`dictation-field-test` checks composer switching and teardown, scoped cancellation, delayed insertion and
+the order of sound cues against ducking
 with synthetic capture and real AppKit editors, without recording audio or touching the shared clipboard.
 `dictation-test` checks formatting and model options; `dictation-inference-test` checks score selection,
 byte BPE, Fourier/mel features, listening bands and audio partitioning without downloading a model. `dictation-worker-test`

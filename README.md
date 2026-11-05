@@ -28,24 +28,17 @@ For anything private, email [iabueammar@gmail.com](mailto:iabueammar@gmail.com).
   <img src="docs/screenshot.png" alt="Tinycast command palette" width="720">
 </p>
 
-## Support
-
-Tinycast is **free, and it stays that way**. If you enjoy it, consider buying a wallpaper pack and get a discord role. It would help me a lot.
-
-<p align="center">
-  <a href="https://tinycast.dev/support">
-    <img alt="Support Tinycast" width="188" height="44" src="docs/support-button.svg"></a><br>
-  <sub>Payments are handled securely by <a href="https://polar.sh">Polar.sh</a>.</sub>
-</p>
-
 ## Features
 
 - **App launcher** — fuzzy-search and launch anything, pin favorites, see what's running, quit an app
   or every app at once.
 - **Global hotkey** — one shortcut summons the palette from anywhere.
 - **Per-app hotkeys** — bind a key to an app; press it to toggle (focus/hide).
-- **Search Files** — open files and folders from the folders you choose, through Spotlight, with no
-  index of our own.
+- **Deeplinks** — run any command, window action, quicklink, snippet, note or chat from a
+  `tinycast://` URL, for Karabiner-Elements, Shortcuts or scripts. A link can carry text and
+  arguments, and a link from outside asks before it acts. Copy Deeplink (⇧⌘C) gives you the link.
+- **Search Files** — find files and folders instantly from a private index of the folders you choose,
+  kept on your Mac. Needs Full Disk Access; off by default.
 - **Dictionary** — look a word up with the Define Word command, or define whatever you typed from the
   launcher's fallbacks, read from the Mac's own dictionaries.
 - **Clipboard history** — text and images, searchable, pasted back into the app you were using.
@@ -57,8 +50,8 @@ Tinycast is **free, and it stays that way**. If you enjoy it, consider buying a 
 - **Snippets** — reusable Markdown templates with dynamic placeholders, arguments, nested references
   and optional keyword expansion.
 - **Custom commands** — run named shell commands through fuzzy search or their own global hotkeys.
-- **Window management** — 34 Rectangle-style actions: halves, quarters, thirds, sizing, nudging,
-  display moves, fullscreen and Spaces.
+- **Window management** — 39 Rectangle-style actions: halves, quarters, thirds, sizing, nudging,
+  edge moves, display moves, fullscreen and Spaces.
 - **System actions** — lock, sleep, restart, empty trash, toggle appearance, Bluetooth, mute, hidden
   files, and more.
 - **Calendar and meetings** — your next meeting on the empty palette and in the menu bar, one key to
@@ -70,6 +63,8 @@ Tinycast is **free, and it stays that way**. If you enjoy it, consider buying a 
   longer conversations in the AI Chat window, with a searchable, pinnable history. Off out of the box,
   like every AI feature.
 - **Quick Actions** — fix grammar, rewrite, translate or summarize the selected text in any app.
+- **Dictation** — press a shortcut and speak, and the text lands in the app you're
+  using. Speech is turned into text on your Mac. Off by default.
 - **Raycast extensions** — run the ones you already have natively, rendered as SwiftUI.
 - **Backup and import** — export your settings to a file, or import your setup from Raycast.
 
@@ -92,31 +87,11 @@ Then run the one line that matches your Mac:
 The upstream Homebrew packages remain macOS 26-only. This compatibility branch builds from source on
 macOS 15; see [Maintaining the macOS 15 branch](docs/macos15.md).
 
-Not sure which you have? **Apple menu → About This Mac.** Homebrew checks too, and refuses the
-wrong one.
+Not sure which Mac you have? **Apple menu → About This Mac.**
 
-Want early builds? `brew install --cask tinycast@beta` puts `Tinycast Beta.app` beside the stable
-app, with its own settings and permissions. Apple silicon, macOS 26+.
-
-Homebrew clears the macOS quarantine flag on every install and update, so there is nothing else to
-run. Downloading a DMG from [Releases](https://github.com/abue-ammar/tinycast/releases) instead?
-Tinycast is self-signed, so clear the flag once:
-`xattr -dr com.apple.quarantine "/Applications/Tinycast.app"`.
-
-## Permissions
-
-**Accessibility** — needed when Tinycast pastes or expands text into another app, and the only
-permission snippet keyword expansion needs. You're prompted when you first use a feature that needs
-it; grant access in **System Settings → Privacy & Security → Accessibility**. Snippets ship
-disabled, and keystrokes are matched locally, never stored and never sent anywhere.
-
-## Using it
-
-1. Open **Settings → General** and record a global shortcut to summon Tinycast.
-2. Press it anywhere → the palette floats in. Type to filter, **↵** to launch.
-3. **Tab** switches between Apps and Clipboard; **↑/↓** move, **Esc** dismisses.
-4. **Settings → Shortcuts** — search an app or custom command and record a global shortcut.
-5. **Settings → Snippets** — enable the feature, then create templates with expansion keywords.
+- **Early builds:** `brew install --cask tinycast@beta` installs `Tinycast Beta.app` beside the stable app.
+- **DMG from [Releases](https://github.com/abue-ammar/tinycast/releases)?** Drag Tinycast to
+  Applications. It's notarized by Apple, so it opens without a warning.
 
 ## Building from source
 
@@ -124,33 +99,55 @@ See **[docs/development.md](docs/development.md)** for the toolchain, build, pac
 website workflows. **[docs/](docs/README.md)** indexes everything else — architecture, engineering
 standards, the design system and one document per feature.
 
-## Contributing
+## Support
 
-> [!IMPORTANT]
-> **Open an issue before you write code — this is mandatory.** Get the bug or the feature agreed on
-> first; discussing it in the issue (or on [Discord](https://discord.gg/v2Eeb4QQy3)) is strongly
-> encouraged. A PR that doesn't close an issue marked `approved` is closed automatically however good
-> the patch is, and the work is wasted. Docs-only fixes are the one exception.
->
-> Tinycast's feature set is deliberately closed, and "another launcher has it" is not a reason on its
-> own. Ask whether a feature is wanted before you ask for it.
+Tinycast is **free, and it stays that way**. If it earns a place on your Mac, consider supporting its
+development. Thanks in advance.
 
-Read **[CONTRIBUTING.md](CONTRIBUTING.md)** first — it covers the memory budget every PR is held to,
-the before/after video requirement for visual changes, and why features get declined. Every PR fills
-in the **[pull request template](.github/PULL_REQUEST_TEMPLATE.md)**. Security issues go through
-[SECURITY.md](SECURITY.md), not the issue tracker.
+<p align="center">
+  <a href="https://tinycast.dev/support">
+    <img alt="Support Tinycast" width="188" height="44" src="docs/support-button.svg"></a><br>
+  <sub>Payments are handled securely by <a href="https://polar.sh">Polar.sh</a>.</sub>
+</p>
 
-Questions, ideas, or just want to follow along? **[Join the Discord](https://discord.gg/v2Eeb4QQy3)**.
+You can also support Tinycast with crypto: scan a code with your wallet, or copy an address. Send
+only on the network named for that address. If yours isn't listed,
+[email me](mailto:iabueammar@gmail.com?subject=Supporting%20Tinycast).
 
-## Star History
+<table>
+  <tr>
+    <td align="center">
+      <img width="160" alt="Bitcoin address QR code" src="website/public/wallets/bitcoin-qr.svg"><br>
+      <b>Bitcoin</b>
+    </td>
+    <td align="center">
+      <img width="160" alt="Ethereum, Base and BNB Smart Chain address QR code" src="website/public/wallets/ethereum-qr.svg"><br>
+      <b>Ethereum, Base, BNB Smart Chain</b>
+    </td>
+    <td align="center">
+      <img width="160" alt="Solana address QR code" src="website/public/wallets/solana-qr.svg"><br>
+      <b>Solana</b>
+    </td>
+  </tr>
+</table>
 
-<a href="https://www.star-history.com/?repos=abue-ammar%2Ftinycast&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
- </picture>
-</a>
+**Bitcoin**
+
+```text
+bc1qpfxtjpuhm2cm8kg4lqgu3ffjch7vcjf678arwn
+```
+
+**Ethereum, Base and BNB Smart Chain** (one address for all three)
+
+```text
+0x22A00612bc0bf1Dc73AAC75e8De1BA4e81fF0810
+```
+
+**Solana**
+
+```text
+4EH7JDXZxkJiahas1xgPyC1iBW9pfCVUXxVtpqvwAz6T
+```
 
 ## License
 
