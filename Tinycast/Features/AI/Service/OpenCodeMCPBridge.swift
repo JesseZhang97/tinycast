@@ -453,12 +453,13 @@ final class OpenCodeMCPBridge {
                 + "Cache-Control: no-store\r\nConnection: close\r\n"
                 + "Content-Length: \(body.count)\r\n\r\n").utf8)
         response.append(body)
+        let payload = response
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 var sent = 0
-                while sent < response.count {
-                    let count = response.withUnsafeBytes {
-                        Darwin.send(fd, $0.baseAddress! + sent, response.count - sent, 0)
+                while sent < payload.count {
+                    let count = payload.withUnsafeBytes {
+                        Darwin.send(fd, $0.baseAddress! + sent, payload.count - sent, 0)
                     }
                     if count <= 0 {
                         continuation.resume(throwing: URLError(.networkConnectionLost))
